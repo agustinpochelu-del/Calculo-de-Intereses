@@ -125,7 +125,7 @@ if archivo_subido is not None:
             with col1: st.metric("Capital Original", formato_arg(tot_capital))
             with col2: st.metric("Resarcitorios", formato_arg(tot_res))
             with col3: st.metric("Punitorios", formato_arg(tot_pun))
-            with col4: st.metric("Antigüedad Máx (Días)", f"{antiguedad_max} días")
+            with col4: st.metric("Antiguedad Juicio", f"{antiguedad_max} días")
                 
             st.divider()
 
