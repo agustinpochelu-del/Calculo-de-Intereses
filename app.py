@@ -84,26 +84,34 @@ if archivo_subido is not None:
                 lambda x: calcular_interes(x['Vencimiento'], x['fecha_Demanda'], x['Capital'], df_tasas_res), axis=1
             )
             
-            # PUNITORIOS: Arrancan al día siguiente
-            fecha_inicio_punitorios = df_deudas['fecha_Demanda'] + pd.Timedelta(days=1)
+            fecha_inicio_punitorios_global = ultima_fecha_demanda + pd.Timedelta(days=1)
             
             df_deudas['Interes_Punitorio'] = df_deudas.apply(
                 lambda x: calcular_interes(x['fecha_Demanda'] + pd.Timedelta(days=1), x['Fecha_Liquidacion'], x['Capital'], df_tasas_pun), axis=1
             )
             
-            # Antigüedad y Totales
-            df_deudas['Dias_Punitorios'] = (df_deudas['Fecha_Liquidacion'] - fecha_inicio_punitorios).dt.days
-            df_deudas['Dias_Punitorios'] = df_deudas['Dias_Punitorios'].apply(lambda x: max(0, x))
+            # Antigüedad global y Totales
+            antiguedad_juicio = (ultima_fecha_liq - fecha_inicio_punitorios_global).days
+            antiguedad_juicio = max(0, antiguedad_juicio)
             df_deudas['Total_Actualizado'] = df_deudas['Capital'] + df_deudas['Interes_Resarcitorio'] + df_deudas['Interes_Punitorio']
-            
-            # Columna visual para el inicio de punitorios
-            df_deudas['Inicio_Punitorios'] = fecha_inicio_punitorios.dt.strftime('%d/%m/%Y')
             
             # --- TABLAS DE REFERENCIA PARA PANTALLA ---
             display_res = df_tasas_res.copy()
             display_pun = df_tasas_pun.copy()
+            
+            # Ajuste de cierre resarcitorios
             display_res.iloc[-1, display_res.columns.get_loc('Hasta')] = ultima_fecha_demanda
-            display_pun.iloc[-1, display_pun.columns.get_loc('Hasta')] = ultima_fecha_liq
+            
+            # Ajuste inteligente del inicio de punitorios
+            display_pun = display_pun[display_pun['Hasta'] >= fecha_inicio_punitorios_global].copy()
+            if not display_pun.empty:
+                display_pun.iloc[0, display_pun.columns.get_loc('Desde')] = max(display_pun.iloc[0]['Desde'], fecha_inicio_punitorios_global)
+                display_pun.iloc[-1, display_pun.columns.get_loc('Hasta')] = ultima_fecha_liq
+                # Recalculamos los días expuestos para que coincidan con la liquidación real
+                display_pun['dias_calculados'] = (display_pun['Hasta'] - display_pun['Desde']).dt.days
+                # Compensamos si el día final es inclusivo
+                display_pun['dias'] = display_pun['dias_calculados']
+
             display_res['Desde'] = display_res['Desde'].dt.strftime('%d/%m/%Y')
             display_res['Hasta'] = display_res['Hasta'].dt.strftime('%d/%m/%Y')
             display_pun['Desde'] = display_pun['Desde'].dt.strftime('%d/%m/%Y')
@@ -121,20 +129,20 @@ if archivo_subido is not None:
             tot_capital = df_deudas['Capital'].sum()
             tot_res = df_deudas['Interes_Resarcitorio'].sum()
             tot_pun = df_deudas['Interes_Punitorio'].sum()
-            antiguedad_max = df_deudas['Dias_Punitorios'].max()
+            tot_pagar = df_deudas['Total_Actualizado'].sum()
             
             col1, col2, col3, col4 = st.columns(4)
             with col1: st.metric("Capital Original", formato_arg(tot_capital))
             with col2: st.metric("Resarcitorios", formato_arg(tot_res))
             with col3: st.metric("Punitorios", formato_arg(tot_pun))
-            with col4: st.metric("Antigüedad Juicio", f"{antiguedad_max} días")
+            with col4: st.metric("Antigüedad Juicio", f"{antiguedad_juicio} días")
                 
             st.divider()
 
             # --- DETALLE DE OBLIGACIONES ---
             with st.expander("🔍 Ver detalle completo de obligaciones", expanded=False):
                 st.dataframe(
-                    df_deudas[['Impuesto', 'Vencimiento', 'Capital', 'fecha_Demanda', 'Interes_Resarcitorio', 'Inicio_Punitorios', 'Fecha_Liquidacion', 'Dias_Punitorios', 'Interes_Punitorio', 'Total_Actualizado']],
+                    df_deudas[['Impuesto', 'Vencimiento', 'Capital', 'fecha_Demanda', 'Interes_Resarcitorio', 'Fecha_Liquidacion', 'Interes_Punitorio', 'Total_Actualizado']],
                     use_container_width=True
                 )
             
@@ -147,12 +155,18 @@ if archivo_subido is not None:
             with col_t1:
                 st.write("**Resarcitorios (Hasta fecha de Demanda)**")
                 display_res['Tasa_Diaria'] = display_res['Tasa_Diaria'].apply(lambda x: f"{x*100:.4f}%")
-                st.dataframe(display_res[['Desde', 'Hasta', 'Tasa_Diaria']], use_container_width=True, hide_index=True)
+                if 'dias' in display_res.columns:
+                    st.dataframe(display_res[['Desde', 'Hasta', 'Tasa_Diaria', 'dias']], use_container_width=True, hide_index=True)
+                else:
+                    st.dataframe(display_res[['Desde', 'Hasta', 'Tasa_Diaria']], use_container_width=True, hide_index=True)
             
             with col_t2:
-                st.write("**Punitorios (Hasta fecha de Liquidación)**")
+                st.write("**Punitorios (Desde inicio de ejecución)**")
                 display_pun['Tasa_Diaria'] = display_pun['Tasa_Diaria'].apply(lambda x: f"{x*100:.4f}%")
-                st.dataframe(display_pun[['Desde', 'Hasta', 'Tasa_Diaria']], use_container_width=True, hide_index=True)
+                if 'dias' in display_pun.columns:
+                    st.dataframe(display_pun[['Desde', 'Hasta', 'Tasa_Diaria', 'dias']], use_container_width=True, hide_index=True)
+                else:
+                    st.dataframe(display_pun[['Desde', 'Hasta', 'Tasa_Diaria']], use_container_width=True, hide_index=True)
 
             # --- DESCARGA ---
             output = BytesIO()
@@ -164,7 +178,7 @@ if archivo_subido is not None:
             c1, c_boton, c2 = st.columns([1, 2, 1])
             with c_boton:
                 st.download_button(
-                    label="📥 Descargar Planilla de Apremio (Excel)",
+                    label="📥 Descargar Planilla (Excel)",
                     data=procesado,
                     file_name="Liquidacion_ARCA_Apremio.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
