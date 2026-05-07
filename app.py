@@ -54,7 +54,7 @@ if archivo_subido is not None:
             df_tasas_pun['Desde'] = pd.to_datetime(df_tasas_pun['Desde'])
             df_tasas_pun['Hasta'] = pd.to_datetime(df_tasas_pun['Hasta'])
 
-            # --- NUEVO: Capturamos las fechas reales de corte para la visualización ---
+            # Capturamos las fechas reales de corte para la visualización
             ultima_fecha_demanda = df_deudas['fecha_Demanda'].max()
             ultima_fecha_liq = df_deudas['Fecha_Liquidacion'].max()
             
@@ -87,7 +87,7 @@ if archivo_subido is not None:
                 lambda x: calcular_interes(x['fecha_Demanda'] + pd.Timedelta(days=1), x['Fecha_Liquidacion'], x['Capital'], df_tasas_pun), axis=1
             )
             
-            # --- NUEVO: Cálculo de Días de Punitorios (Antigüedad) ---
+            # Cálculo de Días de Punitorios (Antigüedad)
             df_deudas['Dias_Punitorios'] = (df_deudas['Fecha_Liquidacion'] - (df_deudas['fecha_Demanda'] + pd.Timedelta(days=1))).dt.days
             df_deudas['Dias_Punitorios'] = df_deudas['Dias_Punitorios'].apply(lambda x: max(0, x))
             
@@ -97,17 +97,14 @@ if archivo_subido is not None:
             display_res = df_tasas_res.copy()
             display_pun = df_tasas_pun.copy()
             
-            # Ajustamos la última fecha "Hasta" para que coincida con la liquidación
             display_res.iloc[-1, display_res.columns.get_loc('Hasta')] = ultima_fecha_demanda
             display_pun.iloc[-1, display_pun.columns.get_loc('Hasta')] = ultima_fecha_liq
             
-            # Formateo visual
             display_res['Desde'] = display_res['Desde'].dt.strftime('%d/%m/%Y')
             display_res['Hasta'] = display_res['Hasta'].dt.strftime('%d/%m/%Y')
             display_pun['Desde'] = display_pun['Desde'].dt.strftime('%d/%m/%Y')
             display_pun['Hasta'] = display_pun['Hasta'].dt.strftime('%d/%m/%Y')
             
-            fechas_excel_res = df_deudas['Vencimiento'].dt.strftime('%d/%m/%Y') # Para el Excel final
             df_deudas['Vencimiento'] = df_deudas['Vencimiento'].dt.strftime('%d/%m/%Y')
             df_deudas['fecha_Demanda'] = df_deudas['fecha_Demanda'].dt.strftime('%d/%m/%Y')
             df_deudas['Fecha_Liquidacion'] = df_deudas['Fecha_Liquidacion'].dt.strftime('%d/%m/%Y')
@@ -119,6 +116,7 @@ if archivo_subido is not None:
             tot_capital = df_deudas['Capital'].sum()
             tot_res = df_deudas['Interes_Resarcitorio'].sum()
             tot_pun = df_deudas['Interes_Punitorio'].sum()
+            tot_pagar = df_deudas['Total_Actualizado'].sum()
             antiguedad_max = df_deudas['Dias_Punitorios'].max()
             
             col1, col2, col3, col4 = st.columns(4)
@@ -129,7 +127,16 @@ if archivo_subido is not None:
                 
             st.divider()
 
-            # --- CUADRO DE TASAS DINÁMICO ---
+            # --- DETALLE DE OBLIGACIONES (AHORA ARRIBA) ---
+            with st.expander("🔍 Ver detalle completo de obligaciones", expanded=False):
+                st.dataframe(
+                    df_deudas[['Impuesto', 'Vencimiento', 'Capital', 'fecha_Demanda', 'Interes_Resarcitorio', 'Fecha_Liquidacion', 'Dias_Punitorios', 'Interes_Punitorio', 'Total_Actualizado']],
+                    use_container_width=True
+                )
+            
+            st.divider()
+
+            # --- CUADRO DE TASAS DINÁMICO (AHORA ABAJO) ---
             st.markdown("### 📈 Tasas de Interés de Referencia")
             col_t1, col_t2 = st.columns(2)
             
@@ -143,14 +150,6 @@ if archivo_subido is not None:
                 display_pun['Tasa_Diaria'] = display_pun['Tasa_Diaria'].apply(lambda x: f"{x*100:.4f}%")
                 st.dataframe(display_pun[['Desde', 'Hasta', 'Tasa_Diaria']], use_container_width=True, hide_index=True)
 
-            st.divider()
-            
-            with st.expander("🔍 Ver detalle completo de obligaciones", expanded=False):
-                st.dataframe(
-                    df_deudas[['Impuesto', 'Vencimiento', 'Capital', 'fecha_Demanda', 'Interes_Resarcitorio', 'Fecha_Liquidacion', 'Dias_Punitorios', 'Interes_Punitorio', 'Total_Actualizado']],
-                    use_container_width=True
-                )
-            
             # --- DESCARGA ---
             output = BytesIO()
             with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
