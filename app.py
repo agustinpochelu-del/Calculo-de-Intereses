@@ -33,12 +33,10 @@ if archivo_subido is not None:
             df_tasas_res = pd.read_excel(archivo_subido, sheet_name='Tasas')
             df_tasas_pun = pd.read_excel(archivo_subido, sheet_name='Tasas Punitorios')
             
-            # Limpiamos espacios ocultos en los títulos
             df_deudas.columns = df_deudas.columns.str.strip()
             df_tasas_res.columns = df_tasas_res.columns.str.strip()
             df_tasas_pun.columns = df_tasas_pun.columns.str.strip()
             
-            # Normalizamos la columna de días (por si pusiste "Dias" con mayúscula en alguna hoja)
             df_tasas_res = df_tasas_res.rename(columns={'Dias': 'dias'})
             df_tasas_pun = df_tasas_pun.rename(columns={'Dias': 'dias'})
             
@@ -46,7 +44,7 @@ if archivo_subido is not None:
             df_tasas_res = df_tasas_res[df_tasas_res['Desde'].notna() & (df_tasas_res['Desde'] != 'Total')]
             df_tasas_pun = df_tasas_pun[df_tasas_pun['Desde'].notna() & (df_tasas_pun['Desde'] != 'Total')]
             
-            # Conversión de fechas (Usando tus nuevas columnas)
+            # Conversión de fechas
             df_deudas['Vencimiento'] = pd.to_datetime(df_deudas['Vencimiento'])
             df_deudas['fecha_Demanda'] = pd.to_datetime(df_deudas['fecha_Demanda'])
             df_deudas['Fecha_Liquidacion'] = pd.to_datetime(df_deudas['Fecha_Liquidacion'])
@@ -60,7 +58,6 @@ if archivo_subido is not None:
             def calcular_interes(fecha_inicio_calculo, fecha_fin_calculo, capital, df_tabla_tasas):
                 interes_acumulado = 0
                 
-                # Control de seguridad: Si no hay días que calcular, devuelve 0
                 if fecha_inicio_calculo >= fecha_fin_calculo:
                     return 0.0
                     
@@ -85,20 +82,19 @@ if archivo_subido is not None:
                 return round(interes_acumulado, 2)
             
             # 3. EJECUCIÓN A DOS BANDAS
-            # A) Resarcitorios
+            # A) Resarcitorios (Hasta el día de la demanda incluido)
             df_deudas['Interes_Resarcitorio'] = df_deudas.apply(
                 lambda x: calcular_interes(x['Vencimiento'], x['fecha_Demanda'], x['Capital'], df_tasas_res), axis=1
             )
             
-            # B) Punitorios
+            # B) Punitorios (Arrancan al día siguiente de la demanda)
             df_deudas['Interes_Punitorio'] = df_deudas.apply(
-                lambda x: calcular_interes(x['fecha_Demanda'], x['Fecha_Liquidacion'], x['Capital'], df_tasas_pun), axis=1
+                lambda x: calcular_interes(x['fecha_Demanda'] + pd.Timedelta(days=1), x['Fecha_Liquidacion'], x['Capital'], df_tasas_pun), axis=1
             )
             
             # C) Totales
             df_deudas['Total_Actualizado'] = df_deudas['Capital'] + df_deudas['Interes_Resarcitorio'] + df_deudas['Interes_Punitorio']
             
-            # Formateamos las fechas para que queden lindas en pantalla y Excel
             df_deudas['Vencimiento'] = df_deudas['Vencimiento'].dt.strftime('%d/%m/%Y')
             df_deudas['fecha_Demanda'] = df_deudas['fecha_Demanda'].dt.strftime('%d/%m/%Y')
             df_deudas['Fecha_Liquidacion'] = df_deudas['Fecha_Liquidacion'].dt.strftime('%d/%m/%Y')
@@ -112,7 +108,6 @@ if archivo_subido is not None:
             tot_pun = df_deudas['Interes_Punitorio'].sum()
             tot_pagar = df_deudas['Total_Actualizado'].sum()
             
-            # Ahora tenemos 4 columnas
             col1, col2, col3, col4 = st.columns(4)
             with col1:
                 st.metric("Capital Original", formato_arg(tot_capital))
@@ -125,7 +120,6 @@ if archivo_subido is not None:
                 
             st.divider()
             
-            # Detalles
             with st.expander("🔍 Ver detalle de las obligaciones procesadas", expanded=True):
                 st.dataframe(
                     df_deudas[['Impuesto', 'Vencimiento', 'Capital', 'fecha_Demanda', 'Interes_Resarcitorio', 'Fecha_Liquidacion', 'Interes_Punitorio', 'Total_Actualizado']],
