@@ -160,7 +160,7 @@ if archivo_subido is not None:
             c1, c_boton, c2 = st.columns([1, 2, 1])
             with c_boton:
                 st.download_button(
-                    label="📥 Descargar Planilla de Apremio (Excel)",
+                    label="📥 Descargar Planilla (Excel)",
                     data=procesado,
                     file_name="Liquidacion_ARCA_Apremio.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
