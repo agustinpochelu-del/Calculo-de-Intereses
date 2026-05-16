@@ -210,7 +210,7 @@ if st.button("Procesar y Generar TXT", type="primary"):
             try:
                 # 1. Leemos el archivo de tu sistema
                 # Usamos read_csv porque vi que tu sistema exporta CSV (Conceptos y totales)
-                df_liq = pd.read_csv(archivo_liq)
+               df_liq = pd.read_csv(archivo_liq, encoding='latin1')
                 
                 # CUIT de tu empresa (Lo saco del archivo de Datos de Empresa que me pasaste antes)
                 # Si querés, luego lo ponemos en un campo de la barra lateral
