@@ -8,9 +8,8 @@ st.set_page_config(page_title="Generador LSD - AFIP", page_icon="📝", layout="
 def limpiar_cuit(cuit):
     return str(cuit).replace("-", "").replace(" ", "").replace(".", "").zfill(11)
 
-# --- EL MOTOR DE BÚSQUEDA A PRUEBA DE BALAS ---
+# --- MOTOR DE BÚSQUEDA INTELIGENTE DE COLUMNAS ---
 def cargar_dataframe_con_busqueda(archivo_subido, palabra_clave):
-    """Escanea todas las pestañas de un Excel o lee un CSV buscando una columna específica."""
     nombre = archivo_subido.name.lower()
     if nombre.endswith('.xlsx') or nombre.endswith('.xls'):
         hojas = pd.read_excel(archivo_subido, sheet_name=None)
@@ -18,7 +17,7 @@ def cargar_dataframe_con_busqueda(archivo_subido, palabra_clave):
             df.columns = df.columns.astype(str).str.strip()
             for col in df.columns:
                 if palabra_clave in col.upper().replace('.', ''):
-                    return df, col # Devuelve la tabla y el nombre exacto de la columna
+                    return df, col
     else:
         try:
             df = pd.read_csv(archivo_subido, encoding='utf-8', sep=',')
@@ -36,13 +35,13 @@ def cargar_dataframe_con_busqueda(archivo_subido, palabra_clave):
     return None, None
 
 # ==========================================
-# INTERFAZ Y LÓGICA PRINCIPAL
+# INTERFAZ DE USUARIO
 # ==========================================
 st.title("Generador de Libro de Sueldos Digital (LSD)")
-st.markdown("### PASO 2: Registro 01 (Cabecera) + Registro 02 (Empleados)")
+st.markdown("### PASO 2: Corrección Estricta de Registro 02")
 
 # --- BARRA LATERAL ---
-st.sidebar.header("1. Datos para Registro 01")
+st.sidebar.header("1. Parámetros Registro 01")
 cuit_empresa_input = st.sidebar.text_input("C.U.I.T. de la Empresa", max_chars=13, value="30-64496559-3")
 periodo = st.sidebar.text_input("Período (AAAAMM)", max_chars=6, value="202604")
 tipo_liq = st.sidebar.selectbox("Tipo de Liquidación", ["M - Mensual", "Q - Quincenal", "S - Semanal"])
@@ -51,7 +50,7 @@ dias_base = st.sidebar.text_input("Días Base (F931)", max_chars=2, value="30")
 
 st.sidebar.divider()
 
-st.sidebar.header("2. Fechas para Registro 02")
+st.sidebar.header("2. Fechas Registro 02")
 fecha_pago_defecto = datetime.today()
 try:
     if len(periodo) == 6:
@@ -62,101 +61,134 @@ try:
 except:
     pass
 
-fecha_pago = st.sidebar.date_input("Fecha de Pago (Se autocalcula)", value=fecha_pago_defecto)
+fecha_pago = st.sidebar.date_input("Fecha de Pago (5 del mes anterior)", value=fecha_pago_defecto)
 fecha_rubrica = st.sidebar.date_input("Fecha de Rúbrica", value=datetime.today())
 
-# --- ÁREA PRINCIPAL ---
+# --- CARGA DE ARCHIVOS ---
 col1, col2 = st.columns(2)
 
 with col1:
     st.markdown("**A. Sábana de Liquidación**")
-    archivo_liq = st.file_uploader("Sube el archivo 'Conceptos y Totales'", type=["csv", "xls", "xlsx"], key="liq")
+    archivo_liq = st.file_uploader("Subir archivo 'Conceptos y Totales'", type=["csv", "xls", "xlsx"], key="liq")
 
 with col2:
     st.markdown("**B. Maestro de Empleados**")
-    archivo_emp = st.file_uploader("Sube la base con Legajo, CBU, etc.", type=["csv", "xls", "xlsx"], key="emp")
+    archivo_emp = st.file_uploader("Subir base histórica de Empleados", type=["csv", "xls", "xlsx"], key="emp")
 
-if st.button("Generar TXT (Registros 01 y 02)", type="primary"):
+# --- MOTOR DE PROCESAMIENTO ---
+if st.button("Procesar y Validar Estructuras", type="primary"):
     if not cuit_empresa_input or not periodo or archivo_liq is None or archivo_emp is None:
-        st.warning("⚠️ Faltan cargar datos o subir alguno de los dos archivos.")
+        st.warning("⚠️ Faltan completar datos o subir archivos.")
     else:
         try:
-            # --- 1. PROCESAR LIQUIDACIÓN (Con Escáner) ---
+            # 1. Leer Sábana
             df_liq, col_cuil_liq = cargar_dataframe_con_busqueda(archivo_liq, 'CUIL')
-            
             if df_liq is None:
-                st.error("❌ No encontré el C.U.I.L. en NINGUNA pestaña de la liquidación.")
+                st.error("❌ No se encontró la columna de CUIL en la liquidación.")
                 st.stop()
-
+                
             empleados_unicos = df_liq[col_cuil_liq].dropna().unique()
             cantidad_empleados = len(empleados_unicos)
 
-            # --- 2. PROCESAR MAESTRO DE EMPLEADOS (Con Escáner) ---
+            # 2. Leer Maestro de Empleados
             df_emp, col_cuil_emp = cargar_dataframe_con_busqueda(archivo_emp, 'CUIL')
-            
             if df_emp is None:
-                st.error("❌ No encontré el C.U.I.L. en NINGUNA pestaña del Maestro de Empleados.")
+                st.error("❌ No se encontró la columna de CUIL en el Maestro de Empleados.")
                 st.stop()
 
-            # Creamos el diccionario rápido
+            # Normalizar títulos del maestro para evitar fallas por minúsculas/mayúsculas
+            df_emp.columns = df_emp.columns.str.upper()
+            col_cuil_emp_upper = col_cuil_emp.upper()
+
+            # Mapear datos del maestro
             maestro_dict = {}
             for _, row in df_emp.iterrows():
-                cuil_limpio = limpiar_cuit(row[col_cuil_emp])
-                maestro_dict[cuil_limpio] = {
-                    'legajo': str(row.get('Legajo', row.get('Número de legajo', ''))).strip(),
-                    'dependencia': str(row.get('Dependencia', '')).strip(),
-                    'cbu': str(row.get('CBU', '')).strip().replace('-', '').replace(' ', '')
+                cuil_m = limpiar_cuit(row[col_cuil_emp_upper])
+                
+                # Buscamos columnas alternativas por si varían de nombre
+                legajo_val = str(row.get('LEGAJO', row.get('NÚMERO DE LEGAJO', row.get('NUMERO DE LEGAJO', '')))).strip()
+                dep_val = str(row.get('DEPENDENCIA', row.get('SECTOR', ''))).strip()
+                cbu_val = str(row.get('CBU', '')).strip().replace('-', '').replace(' ', '')
+                
+                # Reemplazo de "nan" si la celda de Excel venía vacía
+                if legajo_val.lower() == 'nan': legajo_val = ''
+                if dep_val.lower() == 'nan': dep_val = ''
+                if cbu_val.lower() == 'nan': cbu_val = ''
+
+                maestro_dict[cuil_m] = {
+                    'legajo': legajo_val,
+                    'dependencia': dep_val,
+                    'cbu': cbu_val
                 }
 
-            # --- 3. ARMADO DEL TXT ---
+            # 3. ARMADO DE LÍNEAS
             lineas_txt = []
 
-            # REGISTRO 01
-            cuit_limpio = limpiar_cuit(cuit_empresa_input)
-            tipo_liq_letra = tipo_liq[0]
-            registro_01 = f"01{cuit_limpio}SJ{periodo}{tipo_liq_letra}{str(nro_liq).zfill(5)}{str(dias_base).zfill(2)}{str(cantidad_empleados).zfill(6)}"
-            lineas_txt.append(registro_01)
+            # ---- REGLA ESTRICTA REGISTRO 01 ----
+            cuit_l = limpiar_cuit(cuit_empresa_input)
+            t_liq = tipo_liq[0]
+            r01 = f"01{cuit_l}SJ{periodo}{t_liq}{str(nro_liq).zfill(5)}{str(dias_base).zfill(2)}{str(cantidad_empleados).zfill(6)}"
+            lineas_txt.append(r01)
 
-            # Fechas a formato TXT (AAAAMMDD)
-            fecha_pago_txt = fecha_pago.strftime("%Y%m%d")
-            fecha_rubrica_txt = fecha_rubrica.strftime("%Y%m%d")
+            # Preparar fechas
+            f_pago_txt = fecha_pago.strftime("%Y%m%d")
+            f_rubrica_txt = fecha_rubrica.strftime("%Y%m%d")
 
-            # REGISTRO 02 (Uno por cada empleado encontrado en la liquidación)
+            # ---- REGLA ESTRICTA REGISTRO 02 ----
+            desglose_mostrar = [] # Para auditar visualmente en la pantalla de la app
+            
             for cuil in empleados_unicos:
-                cuil_limpio = limpiar_cuit(cuil)
-                datos = maestro_dict.get(cuil_limpio, {})
+                cuil_l = limpiar_cuit(cuil)
+                emp_data = maestro_dict.get(cuil_l, {})
 
-                legajo_txt = datos.get('legajo', '').ljust(10)[:10]
-                dependencia_txt = datos.get('dependencia', '').ljust(50)[:50]
-                cbu_raw = datos.get('cbu', '')
+                # Rellenos exactos con corte de seguridad [:longitud] por si el texto excede el campo
+                legajo_fixed = emp_data.get('legajo', '').ljust(10)[:10]
+                dependencia_fixed = emp_data.get('dependencia', '').ljust(50)[:50]
+                cbu_fixed = emp_data.get('cbu', '')
 
-                if len(cbu_raw) == 22:
-                    forma_pago_txt = '3'
-                    cbu_txt = cbu_raw
+                # Determinación estricta de CBU y Forma de Pago
+                if len(cbu_fixed) == 22:
+                    forma_pago = '3'
+                    cbu_txt = cbu_fixed
                 else:
-                    forma_pago_txt = '1'
-                    cbu_txt = ' ' * 22 
+                    forma_pago = '1'
+                    cbu_txt = ' ' * 22  # 22 espacios vacíos
+
+                dias_tope_fixed = str(dias_base).zfill(3)
+
+                # Construcción del Registro 02
+                r02 = f"02{cuil_l}{legajo_fixed}{dependencia_fixed}{cbu_txt}{dias_tope_fixed}{f_pago_txt}{f_rubrica_txt}{forma_pago}"
+                lineas_txt.append(r02)
                 
-                dias_tope_txt = str(dias_base).zfill(3)
+                # Guardamos para el visor de auditoría
+                desglose_mostrar.append({
+                    "CUIL": cuil_l,
+                    "Legajo": f"'{legajo_fixed}'",
+                    "Dependencia": f"'{dependencia_fixed}'",
+                    "CBU": cbu_txt if cbu_txt.strip() else "[Vacío]",
+                    "Largo Línea": len(r02)
+                })
 
-                # 02 + CUIL(11) + Legajo(10) + Dep(50) + CBU(22) + DiasTope(3) + F.Pago(8) + F.Rubrica(8) + FormaPago(1)
-                registro_02 = f"02{cuil_limpio}{legajo_txt}{dependencia_txt}{cbu_txt}{dias_tope_txt}{fecha_pago_txt}{fecha_rubrica_txt}{forma_pago_txt}"
-                lineas_txt.append(registro_02)
-
-            # --- RESULTADO ---
+            # 4. EXTRACCIÓN Y RESPUESTA
             texto_final = "\n".join(lineas_txt)
             
-            st.success(f"✅ ¡Éxito! Se generó la cabecera y {cantidad_empleados} registros de empleados.")
+            st.success("✅ ¡Registros procesados!")
             
-            with st.expander("👀 Ver previsualización del TXT"):
+            # Visor de Auditoría de Longitudes
+            st.markdown("### 🔍 Tabla de Control de Longitud (Registro 02)")
+            st.markdown("Cada línea del Registro 02 **debe medir exactamente 115 caracteres** según especifica el manual de AFIP.")
+            st.dataframe(pd.DataFrame(desglose_mostrar), use_container_width=True)
+
+            with st.expander("👀 Ver Estructura Plana del Archivo (.txt)"):
                 st.code(texto_final)
-                
+
             st.download_button(
-                label="⬇️ Descargar TXT (Registros 01 y 02)",
+                label="⬇️ Descargar TXT Validado (01 + 02)",
                 data=texto_final,
-                file_name=f"LSD_R01_R02_{periodo}.txt",
-                mime="text/plain"
+                file_name=f"LSD_Validado_{periodo}.txt",
+                mime="text/plain",
+                type="primary"
             )
 
         except Exception as e:
-            st.error(f"Error técnico: {e}")
+            st.error(f"Error en procesamiento: {e}")
