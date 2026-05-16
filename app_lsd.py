@@ -208,12 +208,10 @@ if st.button("Procesar y Generar TXT", type="primary"):
     else:
         with st.spinner("🔄 Procesando liquidación..."):
             try:
-                # 1. Leemos el archivo de tu sistema
-                # Usamos read_csv porque vi que tu sistema exporta CSV (Conceptos y totales)
+                # 1. Leemos el archivo de tu sistema indicando el encoding correcto
                 df_liq = pd.read_csv(archivo_liq, encoding='latin1')
                 
-                # CUIT de tu empresa (Lo saco del archivo de Datos de Empresa que me pasaste antes)
-                # Si querés, luego lo ponemos en un campo de la barra lateral
+                # CUIT de tu empresa
                 cuit_empresa = limpiar_cuit_cuil("30-64496559-3") 
                 
                 # Variables para armar el TXT
@@ -224,7 +222,6 @@ if st.button("Procesar y Generar TXT", type="primary"):
                 # =================================================================
                 # ARMADO REGISTRO 01: Cabecera de la Liquidación (35 caracteres)
                 # =================================================================
-                # '01' + CUIT + 'SJ' + Periodo + TipoLiq + NroLiq + DiasBase + CantidadReg04
                 tipo_liq_letra = tipo_liq[0] # Saca la 'M', 'Q' o 'S'
                 nro_liq_formateado = str(nro_liq).zfill(5)
                 dias_base_formateado = str(dias_base).zfill(2)
@@ -237,14 +234,13 @@ if st.button("Procesar y Generar TXT", type="primary"):
                 # RECORREMOS CADA EMPLEADO PARA ARMAR SUS REGISTROS
                 # =================================================================
                 for cuil in empleados_procesados:
-                    # Filtramos solo las filas de ESTE empleado
                     df_empleado = df_liq[df_liq['C.U.I.L.'] == cuil]
                     cuil_limpio = limpiar_cuit_cuil(cuil)
                     
                     # (ACÁ IRÁ EL REGISTRO 02 Y EL 04 DE ESTE EMPLEADO EN EL PRÓXIMO PASO)
                     
                     # =================================================================
-                    # ARMADO REGISTRO 03: Detalle de Conceptos (39 caracteres por línea)
+                    # ARMADO REGISTRO 03: Detalle de Conceptos
                     # =================================================================
                     for index, row in df_empleado.iterrows():
                         cod_sistema = str(row['Número de concepto'])
@@ -265,11 +261,7 @@ if st.button("Procesar y Generar TXT", type="primary"):
                         # Formateamos números
                         cant_formateada = form_cant(cantidad)
                         imp_formateado = form_imp(importe)
-                        
-                        # '03' (2) + CUIL (11) + CodAFIP (6) + Cantidad (5) + Unidades '01' (2) + Importe (15) + D/C (1) = 42 caracteres? 
-                        # Nota: El manual dice 39, revisemos: 2 + 11 + 6 + 5 + 2 (unidades default es '01' o espacios?) 
-                        # Según Guía AFIP, Unidades (días, hs, etc) se pueden poner en espacios si no hay, uso '  ' 
-                        unidades = '  ' # 2 espacios en blanco si no pasamos unidad de medida específica
+                        unidades = '  ' # 2 espacios en blanco
                         
                         registro_03 = f"03{cuil_limpio}{cod_afip}{cant_formateada}{unidades}{imp_formateado}{indicador_dc}"
                         lineas_txt.append(registro_03)
