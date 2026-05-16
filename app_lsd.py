@@ -24,19 +24,28 @@ def guardar_json(nombre_archivo, datos):
 
 def procesar_txt_afip(archivo_txt_afip):
     """Lee el TXT de AFIP, cruza los conceptos y los clasifica (1, 2, 3)"""
+    # Leemos el archivo
     df = pd.read_csv(archivo_txt_afip, sep=';', dtype=str, encoding='latin1')
     
-    # Nos quedamos solo con las columnas que nos importan
-    columnas_clave = ['Código contribuyente', 'Descripción.1', 'Código AFIP', 'Descripción']
-    df_mapeo = df[columnas_clave].copy()
+    # VALIDACIÓN: Por si subimos el archivo equivocado (ej: el catálogo general)
+    if len(df.columns) < 4:
+        st.error("❌ Archivo incorrecto. Asegurate de subir el archivo 'Conceptos_Contribuyente...txt'.")
+        return {}
     
-    # Renombramos
+    # LA MAGIA: Usamos posiciones (iloc) en lugar de nombres para evitar errores de lectura
+    # Col 2: Código de tu sistema | Col 3: Descripción de tu sistema
+    # Col 0: Código AFIP          | Col 1: Descripción AFIP
+    df_mapeo = df.iloc[:, [2, 3, 0, 1]].copy()
+    
+    # Renombramos con nuestras propias variables limpias
     df_mapeo.columns = ['codigo_sistema', 'descripcion_sistema', 'codigo_afip', 'descripcion_afip']
+    
+    # Limpiamos posibles filas vacías
     df_mapeo = df_mapeo.dropna(subset=['codigo_sistema'])
     
     # NUEVA LÓGICA NUMÉRICA (1, 2, 3)
     def clasificar_por_afip(cod_afip):
-        if not isinstance(cod_afip, str): return 0 # 0 = IGNORADO/DESCONOCIDO
+        if pd.isna(cod_afip): return 0 # 0 = IGNORADO
         if cod_afip.startswith('1') or cod_afip.startswith('2'): return 1 # Remunerativo
         if cod_afip.startswith('5'): return 2 # No Remunerativo
         if cod_afip.startswith('8'): return 3 # Retención
