@@ -208,16 +208,22 @@ if st.button("Procesar y Generar TXT", type="primary"):
     else:
         with st.spinner("🔄 Procesando liquidación..."):
             try:
-                # 1. Leemos el archivo (A prueba de balas: detecta coma o punto y coma)
-                try:
-                    df_liq = pd.read_csv(archivo_liq, encoding='latin1', sep=',')
-                    # Si no encuentra la columna CUIL, es porque el separador era punto y coma
-                    if 'C.U.I.L.' not in df_liq.columns:
-                        archivo_liq.seek(0) # Volvemos a poner el archivo al principio
+               # 1. Leemos el archivo inteligentemente según su extensión
+                nombre_archivo = archivo_liq.name.lower()
+                
+                if nombre_archivo.endswith('.xlsx') or nombre_archivo.endswith('.xls'):
+                    # Si es un Excel puro, lo leemos directamente
+                    df_liq = pd.read_excel(archivo_liq)
+                else:
+                    # Si es un CSV, aplicamos la lógica a prueba de balas (comas o punto y coma)
+                    try:
+                        df_liq = pd.read_csv(archivo_liq, encoding='latin1', sep=',')
+                        if 'C.U.I.L.' not in df_liq.columns:
+                            archivo_liq.seek(0) 
+                            df_liq = pd.read_csv(archivo_liq, encoding='latin1', sep=';')
+                    except Exception:
+                        archivo_liq.seek(0)
                         df_liq = pd.read_csv(archivo_liq, encoding='latin1', sep=';')
-                except Exception:
-                    archivo_liq.seek(0)
-                    df_liq = pd.read_csv(archivo_liq, encoding='latin1', sep=';')
                 
                 # CUIT de tu empresa
                 cuit_empresa = limpiar_cuit_cuil("30-64496559-3") 
