@@ -83,4 +83,235 @@ st.sidebar.header("1. Cerebro de la App")
 st.sidebar.markdown("**A. Actualizar Conceptos AFIP**")
 archivo_afip = st.sidebar.file_uploader("Subir TXT de AFIP", type=["txt"])
 if archivo_afip:
-    if st.sidebar.button("Pro
+    if st.sidebar.button("Procesar y Guardar Conceptos"):
+        nuevo_mapeo = procesar_txt_afip(archivo_afip)
+        if nuevo_mapeo:
+            guardar_json("mapeo_conceptos.json", nuevo_mapeo)
+            st.sidebar.success("✅ ¡Conceptos actualizados con éxito!")
+            st.rerun()
+
+st.sidebar.divider()
+st.sidebar.header("2. Datos de la Empresa y Período")
+
+# Ingreso del CUIT de la empresa
+cuit_empresa_input = st.sidebar.text_input("C.U.I.T. de la Empresa", max_chars=13, placeholder="Ej: 30-64496559-3")
+
+# Cargamos las bases de datos a la memoria de la app
+topes_db = cargar_json("topes_historicos.json")
+mapeo_conceptos_db = cargar_json("mapeo_conceptos.json") 
+
+# El usuario ingresa el período
+periodo = st.sidebar.text_input("Período (AAAAMM)", max_chars=6, placeholder="Ej: 202604")
+
+# Lógica inteligente de Topes
+tope_min = 0.0
+tope_max = 0.0
+
+if periodo:
+    if len(periodo) == 6: 
+        if periodo in topes_db:
+            tope_min = topes_db[periodo]["min"]
+            tope_max = topes_db[periodo]["max"]
+            st.sidebar.success(f"✅ Topes de {periodo} cargados automáticamente.")
+        else:
+            st.sidebar.warning(f"⚠️ Atención: No hay topes registrados para {periodo}.")
+            nuevo_min = st.sidebar.number_input("Ingresar Tope Mínimo", min_value=0.0, format="%.2f")
+            nuevo_max = st.sidebar.number_input("Ingresar Tope Máximo", min_value=0.0, format="%.2f")
+            
+            if st.sidebar.button("💾 Guardar Topes en Repositorio"):
+                topes_db[periodo] = {"min": nuevo_min, "max": nuevo_max}
+                guardar_json("topes_historicos.json", topes_db)
+                st.sidebar.success("¡Topes guardados exitosamente!")
+                st.rerun() 
+    else:
+        st.sidebar.info("Ingresá los 6 dígitos del período.")
+
+st.sidebar.divider()
+
+tipo_liq = st.sidebar.selectbox("Tipo de Liquidación", ["M - Mensual", "Q - Quincenal", "S - Semanal"])
+nro_liq = st.sidebar.text_input("Número de Liquidación", max_chars=5, placeholder="Ej: 1", value="1")
+dias_base = st.sidebar.text_input("Días Base (F931)", max_chars=2, value="30")
+
+st.sidebar.divider()
+st.sidebar.header("Fechas (Registro 02)")
+fecha_pago = st.sidebar.date_input("Fecha de Pago")
+fecha_rubrica = st.sidebar.date_input("Fecha de Rúbrica (Opcional)", value=None)
+
+
+# --- ÁREA PRINCIPAL: CARGA DE ARCHIVOS ---
+st.subheader("3. Carga de Liquidación Mensual")
+
+col1, col2 = st.columns(2)
+
+with col1:
+    st.markdown("**A. Liquidación del Sistema**")
+    archivo_liq = st.file_uploader("Subir Excel/CSV de 'Conceptos y Totales'", type=["xls", "xlsx", "csv"])
+
+with col2:
+    st.markdown("**B. Base de Empleados (Opcional)**")
+    archivo_emp = st.file_uploader("Subir Excel con CBU/Forma de Pago", type=["xls", "xlsx", "csv"])
+
+st.divider()
+
+# --- ESTADO DEL SISTEMA ---
+if not mapeo_conceptos_db:
+    st.warning("⚠️ Todavía no cargaste los conceptos de AFIP. Usá el menú lateral para subir tu archivo .txt exportado de ARCA.")
+
+# --- VISUALIZADOR DE BASES DE DATOS PRECARGADAS ---
+with st.expander("📊 Ver Datos Guardados en Repositorio"):
+    tab1, tab2 = st.tabs(["📌 Topes Previsionales Guardados", "🗂️ Conceptos Mapeados (AFIP vs Sistema)"])
+
+    with tab1:
+        if topes_db:
+            df_topes_mostrar = pd.DataFrame.from_dict(topes_db, orient='index')
+            df_topes_mostrar.index.name = 'Período'
+            df_topes_mostrar.columns = ['Tope Mínimo', 'Tope Máximo']
+            st.dataframe(df_topes_mostrar.style.format("{:,.2f}"), use_container_width=True)
+        else:
+            st.info("Aún no hay topes guardados en el repositorio.")
+
+    with tab2:
+        if mapeo_conceptos_db:
+            df_conceptos_mostrar = pd.DataFrame.from_dict(mapeo_conceptos_db, orient='index')
+            df_conceptos_mostrar.index.name = 'Cód. Sistema'
+            df_conceptos_mostrar.columns = ['Descripción Sistema', 'Cód. AFIP', 'Descripción AFIP', 'Condición (1,2,3)']
+            
+            def mapear_nombre_condicion(val):
+                if val == 1: return "1 - Remunerativo"
+                if val == 2: return "2 - No Remunerativo"
+                if val == 3: return "3 - Retención"
+                return "0 - Ignorado"
+                
+            df_conceptos_mostrar['Condición (1,2,3)'] = df_conceptos_mostrar['Condición (1,2,3)'].apply(mapear_nombre_condicion)
+            st.dataframe(df_conceptos_mostrar, use_container_width=True)
+        else:
+            st.info("Aún no hay conceptos guardados. Subí el archivo .txt en la barra lateral.")
+
+st.divider()
+
+# =================================================================
+# --- PROCESAMIENTO ---
+# =================================================================
+if st.button("Procesar y Generar TXT", type="primary"):
+    # VALIDACIONES INICIALES
+    if not mapeo_conceptos_db:
+        st.error("❌ Detenido: Falta cargar el mapeo de conceptos de AFIP.")
+    elif archivo_liq is None:
+        st.warning("⚠️ Por favor, subí el archivo de liquidación ('Conceptos y totales') para comenzar.")
+    elif not cuit_empresa_input:
+        st.warning("⚠️ Por favor, ingresá el CUIT de la empresa en la barra lateral.")
+    elif not periodo or len(periodo) != 6:
+        st.warning("⚠️ El Período es obligatorio y debe tener 6 dígitos.")
+    elif tope_min == 0 or tope_max == 0:
+        st.error("❌ Faltan los topes para este período. Cargalos en la barra lateral y guardalos.")
+    else:
+        with st.spinner("🔄 Procesando liquidación..."):
+            try:
+                # 1. Leemos el archivo inteligentemente según su extensión
+                nombre_archivo = archivo_liq.name.lower()
+                
+                if nombre_archivo.endswith('.xlsx') or nombre_archivo.endswith('.xls'):
+                    df_liq = pd.read_excel(archivo_liq)
+                else:
+                    try:
+                        df_liq = pd.read_csv(archivo_liq, encoding='latin1', sep=',')
+                        if len(df_liq.columns) < 5: 
+                            archivo_liq.seek(0)
+                            df_liq = pd.read_csv(archivo_liq, encoding='latin1', sep=';')
+                    except Exception:
+                        archivo_liq.seek(0)
+                        df_liq = pd.read_csv(archivo_liq, encoding='latin1', sep=';')
+                
+                # --- CAZA-COLUMNAS: Buscamos el CUIL sea como sea que esté escrito ---
+                df_liq.columns = df_liq.columns.str.strip() 
+                col_cuil = None
+                
+                for col in df_liq.columns:
+                    if 'CUIL' in col.upper().replace('.', ''):
+                        col_cuil = col
+                        break
+                
+                if not col_cuil:
+                    st.error(f"❌ No encontré la columna CUIL. ¿Seguro que subiste el archivo 'Conceptos y Totales'? Las columnas que encontré son: {', '.join(df_liq.columns[:5])}...")
+                    st.stop()
+                    
+                df_liq.rename(columns={col_cuil: 'CUIL_INTERNO'}, inplace=True)
+                
+                # Usamos el CUIT dinámico que pusiste en la barra lateral
+                cuit_empresa = limpiar_cuit_cuil(cuit_empresa_input) 
+                
+                # Variables para armar el TXT
+                lineas_txt = []
+                df_liq = df_liq.dropna(subset=['CUIL_INTERNO']) # Limpiamos filas vacías
+                empleados_procesados = df_liq['CUIL_INTERNO'].unique()
+                cantidad_empleados = len(empleados_procesados)
+                
+                # =================================================================
+                # ARMADO REGISTRO 01: Cabecera de la Liquidación (35 caracteres)
+                # =================================================================
+                tipo_liq_letra = tipo_liq[0] # Saca la 'M', 'Q' o 'S'
+                nro_liq_formateado = str(nro_liq).zfill(5)
+                dias_base_formateado = str(dias_base).zfill(2)
+                cant_empleados_formateado = str(cantidad_empleados).zfill(6)
+                
+                registro_01 = f"01{cuit_empresa}SJ{periodo}{tipo_liq_letra}{nro_liq_formateado}{dias_base_formateado}{cant_empleados_formateado}"
+                lineas_txt.append(registro_01)
+                
+                # =================================================================
+                # RECORREMOS CADA EMPLEADO PARA ARMAR SUS REGISTROS
+                # =================================================================
+                for cuil in empleados_procesados:
+                    df_empleado = df_liq[df_liq['CUIL_INTERNO'] == cuil]
+                    cuil_limpio = limpiar_cuit_cuil(cuil)
+                    
+                    # =================================================================
+                    # ARMADO REGISTRO 03: Detalle de Conceptos
+                    # =================================================================
+                    for index, row in df_empleado.iterrows():
+                        try:
+                            cod_sistema = str(row['Número de concepto'])
+                            importe = row['Importe liquidado']
+                            cantidad = row['Cantidad liquidada']
+                        except KeyError as e:
+                            st.error(f"❌ Falta la columna {e}. Por favor revisá el formato de tu Excel. Columnas encontradas: {', '.join(df_liq.columns)}")
+                            st.stop()
+                        
+                        # Buscamos este concepto en tu base de datos de AFIP
+                        if cod_sistema in mapeo_conceptos_db:
+                            cod_afip = mapeo_conceptos_db[cod_sistema]['codigo_afip'].zfill(6)
+                            tipo_concepto = mapeo_conceptos_db[cod_sistema]['tipo']
+                        else:
+                            continue 
+                        
+                        # Definimos Débito o Crédito
+                        indicador_dc = 'D' if tipo_concepto == 3 else 'C'
+                        
+                        cant_formateada = form_cant(cantidad)
+                        imp_formateado = form_imp(importe)
+                        unidades = '  ' 
+                        
+                        registro_03 = f"03{cuil_limpio}{cod_afip}{cant_formateada}{unidades}{imp_formateado}{indicador_dc}"
+                        lineas_txt.append(registro_03)
+
+                # =================================================================
+                # FINAL: MOSTRAMOS EL RESULTADO
+                # =================================================================
+                texto_final = "\n".join(lineas_txt)
+                
+                st.success("✅ ¡Liquidación procesada con éxito!")
+                st.markdown(f"**Empleados procesados:** {cantidad_empleados}")
+                st.markdown(f"**Líneas generadas:** {len(lineas_txt)}")
+                
+                st.download_button(
+                    label="⬇️ Descargar archivo LSD (.txt)",
+                    data=texto_final,
+                    file_name=f"LSD_{cuit_empresa}_{periodo}.txt",
+                    mime="text/plain",
+                    type="primary"
+                )
+                
+                with st.expander("👀 Ver previsualización del archivo"):
+                    st.code(texto_final[:1500] + "\n... (mostrando los primeros caracteres)")
+
+            except Exception as e:
+                st.error(f"❌ Ocurrió un error inesperado al procesar: {e}")
