@@ -208,29 +208,43 @@ if st.button("Procesar y Generar TXT", type="primary"):
     else:
         with st.spinner("🔄 Procesando liquidación..."):
             try:
-               # 1. Leemos el archivo inteligentemente según su extensión
+                # 1. Leemos el archivo inteligentemente según su extensión
                 nombre_archivo = archivo_liq.name.lower()
                 
                 if nombre_archivo.endswith('.xlsx') or nombre_archivo.endswith('.xls'):
-                    # Si es un Excel puro, lo leemos directamente
                     df_liq = pd.read_excel(archivo_liq)
                 else:
-                    # Si es un CSV, aplicamos la lógica a prueba de balas (comas o punto y coma)
                     try:
                         df_liq = pd.read_csv(archivo_liq, encoding='latin1', sep=',')
-                        if 'C.U.I.L.' not in df_liq.columns:
-                            archivo_liq.seek(0) 
+                        if len(df_liq.columns) < 5: 
+                            archivo_liq.seek(0)
                             df_liq = pd.read_csv(archivo_liq, encoding='latin1', sep=';')
                     except Exception:
                         archivo_liq.seek(0)
                         df_liq = pd.read_csv(archivo_liq, encoding='latin1', sep=';')
                 
-                # CUIT de tu empresa
+                # --- CAZA-COLUMNAS: Buscamos el CUIL sea como sea que esté escrito ---
+                df_liq.columns = df_liq.columns.str.strip() # Saca espacios ocultos
+                col_cuil = None
+                
+                for col in df_liq.columns:
+                    if 'CUIL' in col.upper().replace('.', ''):
+                        col_cuil = col
+                        break
+                
+                if not col_cuil:
+                    st.error(f"❌ No encontré la columna CUIL. Las columnas de tu Excel son: {', '.join(df_liq.columns)}")
+                    st.stop()
+                    
+                # Renombramos la columna a un estándar seguro interno
+                df_liq.rename(columns={col_cuil: 'CUIL_INTERNO'}, inplace=True)
+                
+                # CUIT de tu empresa (Podés cambiarlo si necesitás)
                 cuit_empresa = limpiar_cuit_cuil("30-64496559-3") 
                 
                 # Variables para armar el TXT
                 lineas_txt = []
-                empleados_procesados = df_liq['C.U.I.L.'].unique()
+                empleados_procesados = df_liq['CUIL_INTERNO'].unique()
                 cantidad_empleados = len(empleados_procesados)
                 
                 # =================================================================
@@ -248,25 +262,28 @@ if st.button("Procesar y Generar TXT", type="primary"):
                 # RECORREMOS CADA EMPLEADO PARA ARMAR SUS REGISTROS
                 # =================================================================
                 for cuil in empleados_procesados:
-                    df_empleado = df_liq[df_liq['C.U.I.L.'] == cuil]
+                    df_empleado = df_liq[df_liq['CUIL_INTERNO'] == cuil]
                     cuil_limpio = limpiar_cuit_cuil(cuil)
-                    
-                    # (ACÁ IRÁ EL REGISTRO 02 Y EL 04 DE ESTE EMPLEADO EN EL PRÓXIMO PASO)
                     
                     # =================================================================
                     # ARMADO REGISTRO 03: Detalle de Conceptos
                     # =================================================================
                     for index, row in df_empleado.iterrows():
-                        cod_sistema = str(row['Número de concepto'])
-                        importe = row['Importe liquidado']
-                        cantidad = row['Cantidad liquidada']
+                        # Si cambiaron el nombre de alguna otra columna, la app te va a avisar exactamente cuál es
+                        try:
+                            cod_sistema = str(row['Número de concepto'])
+                            importe = row['Importe liquidado']
+                            cantidad = row['Cantidad liquidada']
+                        except KeyError as e:
+                            st.error(f"❌ Falta la columna {e}. Las columnas actuales son: {', '.join(df_liq.columns)}")
+                            st.stop()
                         
                         # Buscamos este concepto en tu base de datos de AFIP
                         if cod_sistema in mapeo_conceptos_db:
                             cod_afip = mapeo_conceptos_db[cod_sistema]['codigo_afip'].zfill(6)
                             tipo_concepto = mapeo_conceptos_db[cod_sistema]['tipo']
                         else:
-                            # Si es un concepto raro o ignorado, lo salteamos
+                            # Si es un concepto que no mapeamos, lo salteamos
                             continue 
                         
                         # Definimos Débito (Descuento) o Crédito (Remunerativo/No Remunerativo)
@@ -297,9 +314,9 @@ if st.button("Procesar y Generar TXT", type="primary"):
                     type="primary"
                 )
                 
-                # Previsualización opcional para que veas cómo va quedando
+                # Previsualización opcional
                 with st.expander("👀 Ver previsualización del archivo"):
-                    st.code(texto_final[:1000] + "\n... (mostrando los primeros caracteres)")
+                    st.code(texto_final[:1500] + "\n... (mostrando los primeros caracteres)")
 
             except Exception as e:
-                st.error(f"❌ Ocurrió un error al procesar el archivo: {e}")
+                st.error(f"❌ Ocurrió un error inesperado al procesar: {e}")
