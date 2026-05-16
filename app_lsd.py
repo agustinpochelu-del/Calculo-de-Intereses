@@ -24,36 +24,27 @@ def guardar_json(nombre_archivo, datos):
 
 def procesar_txt_afip(archivo_txt_afip):
     """Lee el TXT de AFIP, cruza los conceptos y los clasifica (1, 2, 3)"""
-    # Leemos el archivo
     df = pd.read_csv(archivo_txt_afip, sep=';', dtype=str, encoding='latin1')
     
-    # VALIDACIÓN: Por si subimos el archivo equivocado (ej: el catálogo general)
     if len(df.columns) < 4:
         st.error("❌ Archivo incorrecto. Asegurate de subir el archivo 'Conceptos_Contribuyente...txt'.")
         return {}
     
-    # LA MAGIA: Usamos posiciones (iloc) en lugar de nombres para evitar errores de lectura
-    # Col 2: Código de tu sistema | Col 3: Descripción de tu sistema
-    # Col 0: Código AFIP          | Col 1: Descripción AFIP
+    # Col 2: Código sistema | Col 3: Desc sistema | Col 0: Código AFIP | Col 1: Desc AFIP
     df_mapeo = df.iloc[:, [2, 3, 0, 1]].copy()
-    
-    # Renombramos con nuestras propias variables limpias
     df_mapeo.columns = ['codigo_sistema', 'descripcion_sistema', 'codigo_afip', 'descripcion_afip']
-    
-    # Limpiamos posibles filas vacías
     df_mapeo = df_mapeo.dropna(subset=['codigo_sistema'])
     
-    # NUEVA LÓGICA NUMÉRICA (1, 2, 3)
+    # CONVENCIÓN: 1 = Remunerativo, 2 = No Remunerativo, 3 = Retención, 0 = Ignorado
     def clasificar_por_afip(cod_afip):
-        if pd.isna(cod_afip): return 0 # 0 = IGNORADO
-        if cod_afip.startswith('1') or cod_afip.startswith('2'): return 1 # Remunerativo
-        if cod_afip.startswith('5'): return 2 # No Remunerativo
-        if cod_afip.startswith('8'): return 3 # Retención
-        return 0 # Ignorado
+        if pd.isna(cod_afip): return 0
+        if cod_afip.startswith('1') or cod_afip.startswith('2'): return 1
+        if cod_afip.startswith('5'): return 2
+        if cod_afip.startswith('8'): return 3
+        return 0
         
     df_mapeo['tipo'] = df_mapeo['codigo_afip'].apply(clasificar_por_afip)
     
-    # Convertimos a diccionario
     diccionario_mapeo = df_mapeo.set_index('codigo_sistema').to_dict('index')
     return diccionario_mapeo
 
@@ -122,6 +113,7 @@ st.sidebar.header("Fechas (Registro 02)")
 fecha_pago = st.sidebar.date_input("Fecha de Pago")
 fecha_rubrica = st.sidebar.date_input("Fecha de Rúbrica (Opcional)", value=None)
 
+
 # --- ÁREA PRINCIPAL: CARGA DE ARCHIVOS ---
 st.subheader("3. Carga de Liquidación Mensual")
 
@@ -138,9 +130,48 @@ with col2:
 st.divider()
 
 # --- ESTADO DEL SISTEMA ---
-# Chequeo para avisarte si te olvidaste de subir los conceptos
 if not mapeo_conceptos_db:
     st.warning("⚠️ Todavía no cargaste los conceptos de AFIP. Usá el menú lateral para subir tu archivo .txt exportado de ARCA.")
+
+
+# --- NUEVA SECCIÓN: VISUALIZADOR DE BASES DE DATOS PRECARGADAS ---
+st.subheader("📊 Consulta de Datos Guardados en Repositorio")
+
+tab1, tab2 = st.tabs(["📌 Topes Previsionales Guardados", "🗂️ Conceptos Mapeados (AFIP vs Sistema)"])
+
+with tab1:
+    if topes_db:
+        # Convertimos el diccionario de topes a un DataFrame lindo para mostrar
+        df_topes_mostrar = pd.DataFrame.from_dict(topes_db, orient='index')
+        df_topes_mostrar.index.name = 'Período'
+        df_topes_mostrar.columns = ['Tope Mínimo', 'Tope Máximo']
+        # Mostramos la tabla formateada con dos decimales
+        st.dataframe(df_topes_mostrar.style.format("{:,.2f}"), use_container_width=True)
+    else:
+        st.info("Aún no hay topes guardados en el repositorio.")
+
+with tab2:
+    if mapeo_conceptos_db:
+        # Convertimos el diccionario de conceptos a DataFrame
+        df_conceptos_mostrar = pd.DataFrame.from_dict(mapeo_conceptos_db, orient='index')
+        df_conceptos_mostrar.index.name = 'Cód. Sistema'
+        df_conceptos_mostrar.columns = ['Descripción Sistema', 'Cód. AFIP', 'Descripción AFIP', 'Condición (1,2,3)']
+        
+        # Mapeo visual para que entienda qué significa el número de condición
+        def mapear_nombre_condicion(val):
+            if val == 1: return "1 - Remunerativo"
+            if val == 2: return "2 - No Remunerativo"
+            if val == 3: return "3 - Retención"
+            return "0 - Ignorado"
+            
+        df_conceptos_mostrar['Condición (1,2,3)'] = df_conceptos_mostrar['Condición (1,2,3)'].apply(mapear_nombre_condicion)
+        
+        st.dataframe(df_conceptos_mostrar, use_container_width=True)
+    else:
+        st.info("Aún no hay conceptos guardados. Subí el archivo .txt en la barra lateral.")
+
+st.divider()
+
 
 # --- PROCESAMIENTO ---
 if st.button("Procesar y Generar TXT", type="primary"):
@@ -154,4 +185,4 @@ if st.button("Procesar y Generar TXT", type="primary"):
         st.error("❌ Faltan los topes para este período. Cargalos en la barra lateral y guardalos.")
     else:
         st.info("🔄 Archivos validados. Iniciando cruce de datos...")
-        # Acá vendrá el motor que arma las líneas del archivo .txt
+        # Próximo paso: Motor del TXT
