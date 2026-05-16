@@ -48,6 +48,28 @@ def procesar_txt_afip(archivo_txt_afip):
     diccionario_mapeo = df_mapeo.set_index('codigo_sistema').to_dict('index')
     return diccionario_mapeo
 
+# =================================================================
+# --- 1.5 FUNCIONES FORMATEADORAS PARA EL TXT DE AFIP ---
+# =================================================================
+
+def limpiar_cuit_cuil(cuit_cuil):
+    """Quita guiones y espacios, devuelve 11 dígitos."""
+    return str(cuit_cuil).replace("-", "").replace(" ", "").zfill(11)
+
+def form_imp(valor, enteros=13, decimales=2):
+    """Formatea importes sin coma y rellena con ceros a la izquierda (Ej: 15 dígitos)"""
+    if pd.isna(valor): valor = 0
+    total_len = enteros + decimales
+    # Redondea, multiplica por 100 para sacar la coma y convierte a entero
+    val_int = int(round(float(valor), decimales) * (10**decimales))
+    # Para importes negativos (descuentos), usamos valor absoluto porque AFIP usa la D o C al final
+    return str(abs(val_int)).zfill(total_len)
+
+def form_cant(valor, longitud=5):
+    """Formatea cantidades (enteros) rellenando con ceros."""
+    if pd.isna(valor): valor = 0
+    return str(int(float(valor))).zfill(longitud)
+
 
 # =================================================================
 # --- 2. INTERFAZ DE USUARIO (UI) ---
@@ -184,5 +206,94 @@ if st.button("Procesar y Generar TXT", type="primary"):
     elif tope_min == 0 or tope_max == 0:
         st.error("❌ Faltan los topes para este período. Cargalos en la barra lateral y guardalos.")
     else:
-        st.info("🔄 Archivos validados. Iniciando cruce de datos...")
-        # Próximo paso: Motor del TXT
+        with st.spinner("🔄 Procesando liquidación..."):
+            try:
+                # 1. Leemos el archivo de tu sistema
+                # Usamos read_csv porque vi que tu sistema exporta CSV (Conceptos y totales)
+                df_liq = pd.read_csv(archivo_liq)
+                
+                # CUIT de tu empresa (Lo saco del archivo de Datos de Empresa que me pasaste antes)
+                # Si querés, luego lo ponemos en un campo de la barra lateral
+                cuit_empresa = limpiar_cuit_cuil("30-64496559-3") 
+                
+                # Variables para armar el TXT
+                lineas_txt = []
+                empleados_procesados = df_liq['C.U.I.L.'].unique()
+                cantidad_empleados = len(empleados_procesados)
+                
+                # =================================================================
+                # ARMADO REGISTRO 01: Cabecera de la Liquidación (35 caracteres)
+                # =================================================================
+                # '01' + CUIT + 'SJ' + Periodo + TipoLiq + NroLiq + DiasBase + CantidadReg04
+                tipo_liq_letra = tipo_liq[0] # Saca la 'M', 'Q' o 'S'
+                nro_liq_formateado = str(nro_liq).zfill(5)
+                dias_base_formateado = str(dias_base).zfill(2)
+                cant_empleados_formateado = str(cantidad_empleados).zfill(6)
+                
+                registro_01 = f"01{cuit_empresa}SJ{periodo}{tipo_liq_letra}{nro_liq_formateado}{dias_base_formateado}{cant_empleados_formateado}"
+                lineas_txt.append(registro_01)
+                
+                # =================================================================
+                # RECORREMOS CADA EMPLEADO PARA ARMAR SUS REGISTROS
+                # =================================================================
+                for cuil in empleados_procesados:
+                    # Filtramos solo las filas de ESTE empleado
+                    df_empleado = df_liq[df_liq['C.U.I.L.'] == cuil]
+                    cuil_limpio = limpiar_cuit_cuil(cuil)
+                    
+                    # (ACÁ IRÁ EL REGISTRO 02 Y EL 04 DE ESTE EMPLEADO EN EL PRÓXIMO PASO)
+                    
+                    # =================================================================
+                    # ARMADO REGISTRO 03: Detalle de Conceptos (39 caracteres por línea)
+                    # =================================================================
+                    for index, row in df_empleado.iterrows():
+                        cod_sistema = str(row['Número de concepto'])
+                        importe = row['Importe liquidado']
+                        cantidad = row['Cantidad liquidada']
+                        
+                        # Buscamos este concepto en tu base de datos de AFIP
+                        if cod_sistema in mapeo_conceptos_db:
+                            cod_afip = mapeo_conceptos_db[cod_sistema]['codigo_afip'].zfill(6)
+                            tipo_concepto = mapeo_conceptos_db[cod_sistema]['tipo']
+                        else:
+                            # Si es un concepto raro o ignorado, lo salteamos
+                            continue 
+                        
+                        # Definimos Débito (Descuento) o Crédito (Remunerativo/No Remunerativo)
+                        indicador_dc = 'D' if tipo_concepto == 3 else 'C'
+                        
+                        # Formateamos números
+                        cant_formateada = form_cant(cantidad)
+                        imp_formateado = form_imp(importe)
+                        
+                        # '03' (2) + CUIL (11) + CodAFIP (6) + Cantidad (5) + Unidades '01' (2) + Importe (15) + D/C (1) = 42 caracteres? 
+                        # Nota: El manual dice 39, revisemos: 2 + 11 + 6 + 5 + 2 (unidades default es '01' o espacios?) 
+                        # Según Guía AFIP, Unidades (días, hs, etc) se pueden poner en espacios si no hay, uso '  ' 
+                        unidades = '  ' # 2 espacios en blanco si no pasamos unidad de medida específica
+                        
+                        registro_03 = f"03{cuil_limpio}{cod_afip}{cant_formateada}{unidades}{imp_formateado}{indicador_dc}"
+                        lineas_txt.append(registro_03)
+
+                # =================================================================
+                # FINAL: MOSTRAMOS EL RESULTADO
+                # =================================================================
+                texto_final = "\n".join(lineas_txt)
+                
+                st.success("✅ ¡Liquidación procesada con éxito!")
+                st.markdown(f"**Empleados procesados:** {cantidad_empleados}")
+                st.markdown(f"**Líneas generadas:** {len(lineas_txt)}")
+                
+                st.download_button(
+                    label="⬇️ Descargar archivo LSD (.txt)",
+                    data=texto_final,
+                    file_name=f"LSD_{periodo}_{nro_liq}.txt",
+                    mime="text/plain",
+                    type="primary"
+                )
+                
+                # Previsualización opcional para que veas cómo va quedando
+                with st.expander("👀 Ver previsualización del archivo"):
+                    st.code(texto_final[:1000] + "\n... (mostrando los primeros caracteres)")
+
+            except Exception as e:
+                st.error(f"❌ Ocurrió un error al procesar el archivo: {e}")
