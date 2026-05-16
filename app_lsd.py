@@ -208,8 +208,16 @@ if st.button("Procesar y Generar TXT", type="primary"):
     else:
         with st.spinner("🔄 Procesando liquidación..."):
             try:
-                # 1. Leemos el archivo de tu sistema indicando el encoding correcto
-                df_liq = pd.read_csv(archivo_liq, encoding='latin1')
+                # 1. Leemos el archivo (A prueba de balas: detecta coma o punto y coma)
+                try:
+                    df_liq = pd.read_csv(archivo_liq, encoding='latin1', sep=',')
+                    # Si no encuentra la columna CUIL, es porque el separador era punto y coma
+                    if 'C.U.I.L.' not in df_liq.columns:
+                        archivo_liq.seek(0) # Volvemos a poner el archivo al principio
+                        df_liq = pd.read_csv(archivo_liq, encoding='latin1', sep=';')
+                except Exception:
+                    archivo_liq.seek(0)
+                    df_liq = pd.read_csv(archivo_liq, encoding='latin1', sep=';')
                 
                 # CUIT de tu empresa
                 cuit_empresa = limpiar_cuit_cuil("30-64496559-3") 
