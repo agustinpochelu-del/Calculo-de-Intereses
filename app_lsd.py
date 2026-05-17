@@ -93,8 +93,7 @@ if st.button("Procesar y Validar Estructuras", type="primary"):
             empleados_unicos = df_liq[col_cuil_liq].dropna().unique()
             cantidad_empleados = len(empleados_unicos)
 
-            # --- RED DE SEGURIDAD PARA LA DEPENDENCIA ---
-            # Busca si en la liquidación hay algún dato de la dependencia para usarlo de resguardo
+            # Red de Seguridad para Dependencia
             col_lugar_liq = None
             for col in df_liq.columns:
                 if 'LUGAR DE TRABAJO' in col or 'DEPENDENCIA' in col or 'SUCURSAL' in col:
@@ -113,36 +112,41 @@ if st.button("Procesar y Validar Estructuras", type="primary"):
             # 2. Leer Maestro de Empleados
             df_emp, col_cuil_emp = cargar_dataframe_con_busqueda(archivo_emp, 'CUIL')
             if df_emp is None:
-                st.error("❌ No se encontró la columna de CUIL en el Maestro de Empleados.")
+                st.error("❌ No se encontró la columna de CUIL en el Maestro.")
                 st.stop()
 
-            # Normalizar títulos del maestro
             df_emp.columns = df_emp.columns.str.upper()
             col_cuil_emp_upper = col_cuil_emp.upper()
 
-            # Mapear datos del maestro
+            # MAPEO FIEL AL EXCEL
             maestro_dict = {}
             for _, row in df_emp.iterrows():
                 cuil_m = limpiar_cuit(row[col_cuil_emp_upper])
                 
-                legajo_val = str(row.get('LEGAJO', '')).strip()
-                dep_val = str(row.get('DEPENDENCIA DE REVISTA', row.get('DEPENDENCIA', ''))).strip()
-                cbu_val = str(row.get('CBU', '')).strip().replace('-', '').replace(' ', '')
-                
+                # Legajo: Leído tal cual viene
+                legajo_val = str(row.get('LEGAJO', '')).replace('.0', '')
                 if legajo_val.lower() == 'nan': legajo_val = ''
+                
+                dep_val = str(row.get('DEPENDENCIA DE REVISTA', row.get('DEPENDENCIA', ''))).strip()
                 if dep_val.lower() == 'nan': dep_val = ''
+                
+                cbu_val = str(row.get('CBU', '')).strip().replace('-', '').replace(' ', '')
                 if cbu_val.lower() == 'nan': cbu_val = ''
+                    
+                # AHORA SÍ LEO TU COLUMNA DE FORMA DE PAGO
+                fp_val = str(row.get('FORMA DE PAGO', '')).replace('.0', '').strip()
+                if fp_val.lower() == 'nan': fp_val = ''
 
                 maestro_dict[cuil_m] = {
                     'legajo': legajo_val,
                     'dependencia': dep_val,
-                    'cbu': cbu_val
+                    'cbu': cbu_val,
+                    'forma_pago': fp_val
                 }
 
             # 3. ARMADO DE LÍNEAS
             lineas_txt = []
-
-            # ---- REGLA ESTRICTA REGISTRO 01 ----
+            
             cuit_l = limpiar_cuit(cuit_empresa_input)
             t_liq = tipo_liq[0]
             r01 = f"01{cuit_l}SJ{periodo}{t_liq}{str(nro_liq).zfill(5)}{str(dias_base).zfill(2)}{str(cantidad_empleados).zfill(6)}"
@@ -153,36 +157,43 @@ if st.button("Procesar y Validar Estructuras", type="primary"):
 
             desglose_mostrar = [] 
             
-            # ---- REGLA ESTRICTA REGISTRO 02 ----
+            # REGISTRO 02
             for cuil in empleados_unicos:
                 cuil_l = limpiar_cuit(cuil)
                 emp_data = maestro_dict.get(cuil_l, {})
 
-                # --- LÓGICA DE AUTO-COMPLETADO (FALLBACK) ---
+                # Dependencia (con Fallback)
                 dep_raw = emp_data.get('dependencia', '')
-                if not dep_raw: # Si estaba vacío en el Maestro...
-                    dep_raw = fallback_lugar.get(cuil_l, 'ADMINISTRACION') # ...lo saca de la liquidación o pone "ADMINISTRACION"
-
-                legajo_raw = emp_data.get('legajo', '')
-                if not legajo_raw:
-                    legajo_raw = '0' # Por si también se olvidaron el Legajo
-
-                # Rellenos exactos a la derecha según manual AFIP
-                legajo_fixed = legajo_raw.ljust(10)[:10]
+                if not dep_raw: 
+                    dep_raw = fallback_lugar.get(cuil_l, 'ADMINISTRACION')
                 dependencia_fixed = dep_raw.ljust(50)[:50]
-                cbu_fixed = emp_data.get('cbu', '')
+
+                # Legajo Fiel (Alineado a la derecha como tu sistema)
+                legajo_raw = emp_data.get('legajo', '')
+                if len(legajo_raw) == 10:
+                    legajo_fixed = legajo_raw
+                else:
+                    legajo_fixed = legajo_raw.strip().rjust(10, ' ')
+                    if not legajo_fixed.strip(): 
+                        legajo_fixed = '0'.rjust(10, ' ')
 
                 # CBU
+                cbu_fixed = emp_data.get('cbu', '')
                 if len(cbu_fixed) == 22:
-                    forma_pago = '3'
                     cbu_txt = cbu_fixed
                 else:
-                    forma_pago = '1'
                     cbu_txt = ' ' * 22 
+
+                # FORMA DE PAGO (Prioridad total a lo que dice tu Excel)
+                fp_excel = emp_data.get('forma_pago', '')
+                if fp_excel in ['1', '2', '3', '4']:
+                    forma_pago = fp_excel
+                else:
+                    # Solo calcula automático si la celda estaba vacía
+                    forma_pago = '3' if len(cbu_txt.strip()) == 22 else '1'
 
                 dias_tope_fixed = str(dias_base).zfill(3)
 
-                # Construcción del Registro 02
                 r02 = f"02{cuil_l}{legajo_fixed}{dependencia_fixed}{cbu_txt}{dias_tope_fixed}{f_pago_txt}{f_rubrica_txt}{forma_pago}"
                 lineas_txt.append(r02)
                 
@@ -190,15 +201,15 @@ if st.button("Procesar y Validar Estructuras", type="primary"):
                     "CUIL": cuil_l,
                     "Legajo": f"'{legajo_fixed}'",
                     "Dependencia": f"'{dependencia_fixed}'",
-                    "CBU": cbu_txt if cbu_txt.strip() else "[Vacío]",
+                    "F. Pago Excel": fp_excel if fp_excel else "[Calculado]",
                     "Largo Línea": len(r02)
                 })
 
             # 4. RESULTADO
             texto_final = "\n".join(lineas_txt)
-            st.success("✅ ¡Registros procesados!")
+            st.success("✅ ¡Registros procesados respetando tu Excel!")
             
-            st.markdown("### 🔍 Tabla de Control de Longitud (Registro 02)")
+            st.markdown("### 🔍 Tabla de Control (Registro 02)")
             st.dataframe(pd.DataFrame(desglose_mostrar), use_container_width=True)
 
             with st.expander("👀 Ver Archivo"):
