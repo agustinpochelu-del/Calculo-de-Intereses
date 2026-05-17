@@ -8,11 +8,10 @@ st.set_page_config(page_title="Generador LSD - AFIP", page_icon="📝", layout="
 def limpiar_cuit(cuit):
     return str(cuit).replace("-", "").replace(" ", "").replace(".", "").zfill(11)
 
-# --- MOTOR DE BÚSQUEDA (AHORA LEE TODO COMO TEXTO PURO) ---
+# --- MOTOR DE BÚSQUEDA ---
 def cargar_dataframe_con_busqueda(archivo_subido, palabra_clave):
     nombre = archivo_subido.name.lower()
     if nombre.endswith('.xlsx') or nombre.endswith('.xls'):
-        # dtype=str evita que Excel se coma los ceros a la izquierda del CBU
         hojas = pd.read_excel(archivo_subido, sheet_name=None, dtype=str)
         for nombre_hoja, df in hojas.items():
             df.columns = df.columns.astype(str).str.strip()
@@ -47,7 +46,7 @@ cuit_empresa_input = st.sidebar.text_input("C.U.I.T. de la Empresa", max_chars=1
 periodo = st.sidebar.text_input("Período (AAAAMM)", max_chars=6, value="202604")
 tipo_liq = st.sidebar.selectbox("Tipo de Liquidación", ["M - Mensual", "Q - Quincenal", "S - Semanal"])
 nro_liq = st.sidebar.text_input("Número de Liquidación", max_chars=5, value="1")
-dias_base = st.sidebar.text_input("Días Base (F931)", max_chars=2, value="00") # Lo puse en 00 para igualar tu ejemplo
+dias_base = st.sidebar.text_input("Días Base (F931)", max_chars=2, value="30")
 
 st.sidebar.divider()
 
@@ -88,8 +87,28 @@ if st.button("Procesar y Validar Estructuras", type="primary"):
                 st.error("❌ No se encontró la columna de CUIL en la liquidación.")
                 st.stop()
                 
+            df_liq.columns = df_liq.columns.str.upper()
+            col_cuil_liq = col_cuil_liq.upper()
+            
             empleados_unicos = df_liq[col_cuil_liq].dropna().unique()
             cantidad_empleados = len(empleados_unicos)
+
+            # --- RED DE SEGURIDAD PARA LA DEPENDENCIA ---
+            # Busca si en la liquidación hay algún dato de la dependencia para usarlo de resguardo
+            col_lugar_liq = None
+            for col in df_liq.columns:
+                if 'LUGAR DE TRABAJO' in col or 'DEPENDENCIA' in col or 'SUCURSAL' in col:
+                    col_lugar_liq = col
+                    break
+            
+            fallback_lugar = {}
+            if col_lugar_liq:
+                for _, row in df_liq.iterrows():
+                    c = limpiar_cuit(row[col_cuil_liq])
+                    if c not in fallback_lugar:
+                        lugar = str(row[col_lugar_liq]).strip()
+                        if lugar.lower() != 'nan' and lugar:
+                            fallback_lugar[c] = lugar
 
             # 2. Leer Maestro de Empleados
             df_emp, col_cuil_emp = cargar_dataframe_con_busqueda(archivo_emp, 'CUIL')
@@ -106,7 +125,6 @@ if st.button("Procesar y Validar Estructuras", type="primary"):
             for _, row in df_emp.iterrows():
                 cuil_m = limpiar_cuit(row[col_cuil_emp_upper])
                 
-                # AHORA BUSCA LA COLUMNA EXACTA
                 legajo_val = str(row.get('LEGAJO', '')).strip()
                 dep_val = str(row.get('DEPENDENCIA DE REVISTA', row.get('DEPENDENCIA', ''))).strip()
                 cbu_val = str(row.get('CBU', '')).strip().replace('-', '').replace(' ', '')
@@ -140,9 +158,18 @@ if st.button("Procesar y Validar Estructuras", type="primary"):
                 cuil_l = limpiar_cuit(cuil)
                 emp_data = maestro_dict.get(cuil_l, {})
 
+                # --- LÓGICA DE AUTO-COMPLETADO (FALLBACK) ---
+                dep_raw = emp_data.get('dependencia', '')
+                if not dep_raw: # Si estaba vacío en el Maestro...
+                    dep_raw = fallback_lugar.get(cuil_l, 'ADMINISTRACION') # ...lo saca de la liquidación o pone "ADMINISTRACION"
+
+                legajo_raw = emp_data.get('legajo', '')
+                if not legajo_raw:
+                    legajo_raw = '0' # Por si también se olvidaron el Legajo
+
                 # Rellenos exactos a la derecha según manual AFIP
-                legajo_fixed = emp_data.get('legajo', '').ljust(10)[:10]
-                dependencia_fixed = emp_data.get('dependencia', '').ljust(50)[:50]
+                legajo_fixed = legajo_raw.ljust(10)[:10]
+                dependencia_fixed = dep_raw.ljust(50)[:50]
                 cbu_fixed = emp_data.get('cbu', '')
 
                 # CBU
