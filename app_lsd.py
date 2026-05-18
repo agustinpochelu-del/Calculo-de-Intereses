@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import unicodedata
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
 
@@ -10,16 +11,23 @@ def limpiar_cuit(cuit):
     if c.endswith('.0'): c = c[:-2]
     return c.replace("-", "").replace(" ", "").replace(".", "").zfill(11)
 
+def clean_column_name(col):
+    """Elimina acentos, puntos y espacios para estandarizar los títulos del Excel/CSV."""
+    if pd.isna(col): return ""
+    text = str(col).strip().upper()
+    text = ''.join(c for c in unicodedata.normalize('NFD', text) if unicodedata.category(c) != 'Mn')
+    return text.replace('.', '')
+
 # --- MOTOR DE LECTURA INTELIGENTE ---
 def cargar_dataframe_inteligente(archivo_subido, palabra_clave_columna):
     nombre = archivo_subido.name.lower()
     if nombre.endswith('.xlsx') or nombre.endswith('.xls'):
         hojas = pd.read_excel(archivo_subido, sheet_name=None, dtype=str)
         for _, df in hojas.items():
-            df.columns = df.columns.astype(str).str.strip().str.upper()
-            for col in df.columns:
-                if palabra_clave_columna in col.replace('.', ''):
-                    return df
+            # Limpiamos los títulos de esta pestaña
+            df.columns = [clean_column_name(c) for c in df.columns]
+            if any(palabra_clave_columna in c for c in df.columns):
+                return df
     else:
         try:
             df = pd.read_csv(archivo_subido, encoding='utf-8', sep=',', dtype=str)
@@ -30,17 +38,16 @@ def cargar_dataframe_inteligente(archivo_subido, palabra_clave_columna):
             archivo_subido.seek(0)
             df = pd.read_csv(archivo_subido, encoding='latin1', sep=';', dtype=str)
             
-        df.columns = df.columns.astype(str).str.strip().str.upper()
-        for col in df.columns:
-            if palabra_clave_columna in col.replace('.', ''):
-                return df
+        df.columns = [clean_column_name(c) for c in df.columns]
+        if any(palabra_clave_columna in c for c in df.columns):
+            return df
     return None
 
 # ==========================================
 # INTERFAZ DE USUARIO (UI)
 # ==========================================
 st.title("Generador de Libro de Sueldos Digital (LSD)")
-st.markdown("### PASO 2: Cruce Seguro y Formateo de Registro 02")
+st.markdown("### PASO 2: Extracción Directa desde Sábana Mensual")
 
 # --- BARRA LATERAL ---
 st.sidebar.header("1. Parámetros Registro 01")
@@ -82,78 +89,61 @@ st.divider()
 # --- PROCESAMIENTO ---
 if st.button("Procesar y Generar Registro 02", type="primary"):
     if archivo_liq is None or archivo_emp is None:
-        st.warning("⚠️ Por favor, tenés que subir ambos archivos para realizar el cruce.")
+        st.warning("⚠️ Por favor, subí ambos archivos para realizar el cruce.")
     else:
-        with st.spinner("Cruzando datos y validando longitudes..."):
+        with st.spinner("Procesando datos con extracción directa..."):
             try:
-                # 1. LEER Y DETECTAR COLUMNAS DE LA SÁBANA
+                # 1. LEER SÁBANA (Buscamos por el CUIL estandarizado)
                 df_liq = cargar_dataframe_inteligente(archivo_liq, 'CUIL')
                 if df_liq is None:
                     st.error("❌ No encontré la columna CUIL en el archivo de Liquidación.")
                     st.stop()
                 
-                # PARCHE APLICADO: IGNORA PUNTOS EN LA BÚSQUEDA
-                col_cuil_liq = next((col for col in df_liq.columns if 'CUIL' in col.replace('.', '')), None)
-                col_legajo_liq = next((col for col in df_liq.columns if 'LEGAJO' in col.replace('.', '')), None)
-                col_lugar_liq = next((col for col in df_liq.columns if 'LUGAR' in col.replace('.', '') or 'SUCURSAL' in col.replace('.', '') or 'DEPEN' in col.replace('.', '')), None)
-
-                if not col_cuil_liq:
-                    st.error("❌ Error interno: Falló la asignación de la columna CUIL de Liquidación.")
-                    st.stop()
+                # Identificar columnas normalizadas en la Sábana
+                col_cuil_liq = next((c for c in df_liq.columns if 'CUIL' in c), None)
+                col_legajo_liq = next((c for c in df_liq.columns if 'LEGAJO' in c), None)
+                col_lugar_liq = next((c for c in df_liq.columns if 'LUGAR DE TRABAJO' in c), None)
 
                 df_liq_validos = df_liq.dropna(subset=[col_cuil_liq]).copy()
                 empleados_mes = df_liq_validos[col_cuil_liq].unique()
                 cantidad_empleados = len(empleados_mes)
 
-                backup_lugar = {}
-                if col_lugar_liq:
-                    for _, r in df_liq_validos.iterrows():
-                        c_limp = limpiar_cuit(r[col_cuil_liq])
-                        lug = str(r[col_lugar_liq]).strip()
-                        if lug and lug.lower() != 'nan':
-                            backup_lugar[c_limp] = lug
-
-                # 2. LEER Y DETECTAR COLUMNAS DEL MAESTRO
+                # 2. LEER MAESTRO DE EMPLEADOS
                 df_emp = cargar_dataframe_inteligente(archivo_emp, 'CUIL')
                 if df_emp is None:
                     st.error("❌ No encontré la columna CUIL en el Maestro de Empleados.")
                     st.stop()
                 
-                # PARCHE APLICADO: IGNORA PUNTOS EN EL MAESTRO TAMBIÉN
-                col_cuil_emp = next((col for col in df_emp.columns if 'CUIL' in col.replace('.', '')), None)
-                col_legajo_emp = next((col for col in df_emp.columns if 'LEGAJO' in col.replace('.', '')), None)
-                col_dep_emp = next((col for col in df_emp.columns if 'DEPEN' in col.replace('.', '') or 'REVISTA' in col.replace('.', '')), None)
-                col_cbu_emp = next((col for col in df_emp.columns if 'CBU' in col.replace('.', '')), None)
-                col_fp_emp = next((col for col in df_emp.columns if 'FORMA' in col.replace('.', '') or 'PAGO' in col.replace('.', '')), None)
+                col_cuil_emp = next((c for c in df_emp.columns if 'CUIL' in c), None)
+                col_legajo_emp = next((c for c in df_emp.columns if 'LEGAJO' in c), None)
+                col_dep_emp = next((c for c in df_emp.columns if 'DEPENDENCIA' in c or 'REVISTA' in c), None)
+                col_cbu_emp = next((c for c in df_emp.columns if 'CBU' in c), None)
+                col_fp_emp = next((c for c in df_emp.columns if 'FORMA' in c or 'PAGO' in c), None)
 
+                # Mapear el Maestro para búsqueda rápida (CBU y Forma de Pago)
                 maestro_por_cuil = {}
                 maestro_por_legajo = {}
 
                 for _, row in df_emp.iterrows():
                     cuil_m = limpiar_cuit(row[col_cuil_emp]) if col_cuil_emp else ""
-                    
-                    legajo_m = str(row[col_legajo_emp]).replace('.0', '').strip() if col_legajo_emp else ""
+                    legajo_m = str(row.get(col_legajo_emp, '')).replace('.0', '').strip() if col_legajo_emp else ""
+                    dep_m = str(row.get(col_dep_emp, '')).strip() if col_dep_emp else ""
+                    cbu_m = str(row.get(col_cbu_emp, '')).strip().replace('-', '').replace(' ', '') if col_cbu_emp else ""
+                    fp_m = str(row.get(col_fp_emp, '')).replace('.0', '').strip() if col_fp_emp else ""
+
                     if legajo_m.lower() == 'nan': legajo_m = ""
-                    
-                    dep_m = str(row[col_dep_emp]).strip() if col_dep_emp else ""
                     if dep_m.lower() == 'nan': dep_m = ""
-                    
-                    cbu_m = str(row[col_cbu_emp]).strip().replace('-', '').replace(' ', '') if col_cbu_emp else ""
                     if cbu_m.lower() == 'nan': cbu_m = ""
-                    
-                    fp_m = str(row[col_fp_emp]).replace('.0', '').strip() if col_fp_emp else ""
                     if fp_m.lower() == 'nan': fp_m = ""
 
-                    dict_datos = {
-                        'cuil': cuil_m, 'legajo': legajo_m, 'dependencia': dep_m, 'cbu': cbu_m, 'forma_pago': fp_m
-                    }
-                    
+                    dict_datos = {'cuil': cuil_m, 'legajo': legajo_m, 'dependencia_maestro': dep_m, 'cbu': cbu_m, 'forma_pago': fp_m}
                     if cuil_m: maestro_por_cuil[cuil_m] = dict_datos
                     if legajo_m: maestro_por_legajo[legajo_m] = dict_datos
 
                 # 3. CONSTRUCCIÓN DEL ARCHIVO TXT
                 lineas_txt = []
                 
+                # Registro 01
                 cuit_l = limpiar_cuit(cuit_empresa_input)
                 t_liq = tipo_liq[0]
                 r01 = f"01{cuit_l}SJ{periodo}{t_liq}{str(nro_liq).zfill(5)}{str(dias_base).zfill(2)}{str(cantidad_empleados).zfill(6)}"
@@ -168,53 +158,62 @@ if st.button("Procesar y Generar Registro 02", type="primary"):
                 for cuil_raw in empleados_mes:
                     cuil_l = limpiar_cuit(cuil_raw)
                     
-                    row_individual_liq = df_liq_validos[df_liq_validos[col_cuil_liq] == cuil_raw].iloc[0]
-                    legajo_backup = str(row_individual_liq[col_legajo_liq]).replace('.0', '').strip() if col_legajo_liq else ""
-                    if legajo_backup.lower() == 'nan': legajo_backup = ""
+                    # Extraemos los datos DIRECTOS de la Sábana de este mes
+                    df_individual_liq = df_liq_validos[df_liq_validos[col_cuil_liq] == cuil_raw]
+                    row_individual_liq = df_individual_liq.iloc[0]
+                    
+                    legajo_sabana = str(row_individual_liq.get(col_legajo_liq, '')).replace('.0', '').strip()
+                    if legajo_sabana.lower() == 'nan': legajo_sabana = ""
+                        
+                    lugar_sabana = str(row_individual_liq.get(col_lugar_liq, '')).strip()
+                    if lugar_sabana.lower() == 'nan': lugar_sabana = ""
 
-                    # DOBLE MOTOR
+                    # Buscamos datos de pago en el Maestro
                     emp_data = maestro_por_cuil.get(cuil_l)
-                    if not emp_data and legajo_backup:
-                        emp_data = maestro_por_legajo.get(legajo_backup)
+                    if not emp_data and legajo_sabana:
+                        emp_data = maestro_por_legajo.get(legajo_sabana)
                     if not emp_data:
                         emp_data = {}
 
-                    legajo_final = emp_data.get('legajo', legajo_backup)
-                    if not legajo_final: legajo_final = "0"
+                    # ASIGNACIÓN DE LEGAJO (Sábana manda)
+                    legajo_final = legajo_sabana if legajo_sabana else emp_data.get('legajo', '0')
                     legajo_fixed = legajo_final.rjust(10, ' ')
 
-                    dep_final = emp_data.get('dependencia', backup_lugar.get(cuil_l, 'ADMINISTRACION'))
-                    if not dep_final: dep_final = "ADMINISTRACION"
+                    # ASIGNACIÓN DE DEPENDENCIA (Sábana manda)
+                    dep_final = lugar_sabana if lugar_sabana else emp_data.get('dependencia_maestro', 'ADMINISTRACION')
                     dependencia_fixed = dep_final.ljust(50, ' ')[:50]
 
+                    # ASIGNACIÓN DE CBU
                     cbu_final = emp_data.get('cbu', '')
                     cbu_fixed = cbu_final if len(cbu_final) == 22 else (' ' * 22)
 
+                    # ASIGNACIÓN DE FORMA DE PAGO
                     fp_final = emp_data.get('forma_pago', '')
                     if fp_final not in ['1', '2', '3', '4']:
                         fp_final = '3' if len(cbu_fixed.strip()) == 22 else '1'
 
                     dias_tope_fixed = str(dias_base).zfill(3)
 
+                    # Ensamblado estructural final Registro 02
                     r02 = f"02{cuil_l}{legajo_fixed}{dependencia_fixed}{cbu_fixed}{dias_tope_fixed}{f_pago_txt}{f_rubrica_txt}{fp_final}"
                     lineas_txt.append(r02)
 
                     tabla_control.append({
                         "CUIL": cuil_l,
                         "Legajo": f"'{legajo_fixed}'",
-                        "Dependencia": f"'{dependencia_fixed}'",
-                        "CBU": cbu_fixed if cbu_fixed.strip() else "[Espacio en Blanco]",
+                        "Lugar de Trabajo (Sábana)": dependencia_fixed.strip(),
+                        "CBU": cbu_fixed if cbu_fixed.strip() else "[Efectivo]",
                         "F. Pago": fp_final,
                         "Largo": len(r02)
                     })
 
                 texto_final = "\n".join(lineas_txt)
-                st.success("✅ ¡Cruce realizado con éxito!")
+                st.success("✅ ¡Cruce estructural realizado con éxito!")
                 
-                st.markdown("### 🔍 Tabla de Control Técnico")
+                st.markdown("### 🔍 Tabla de Auditoría (Registro 02)")
                 st.dataframe(pd.DataFrame(tabla_control), use_container_width=True)
 
-                with st.expander("👀 Ver Estructura del Archivo"):
+                with st.expander("👀 Ver Estructura del Archivo .txt"):
                     st.code(texto_final)
 
                 st.download_button(
