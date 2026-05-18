@@ -65,14 +65,13 @@ def leer_archivo_sueldos(archivo, palabra_clave="CUIL"):
         return df, "CSV"
 
 # ==========================================
-# INTERFAZ DE USUARIO CON PESTAÑAS
+# INTERFAZ DE USUARIO
 # ==========================================
 st.title("Generador de Libro de Sueldos Digital (LSD)")
 st.markdown("Estructura profesional para la generación masiva de declaraciones de AFIP.")
 
 tab_liq, tab_repo = st.tabs(["📊 Procesar Liquidación Mensual", "🗂️ Repositorio de Legajos (Datos Maestros)"])
 
-# Cargar la base histórica al inicio
 db_historica = cargar_db()
 
 # --- PESTAÑA 2: GESTIÓN DEL REPOSITORIO ---
@@ -162,24 +161,7 @@ with tab_repo:
             st.success("✅ ¡Repositorio actualizado con éxito!")
             st.rerun()
     else:
-        st.info("El repositorio está vacío. Podés completarlo subiendo tu listado maestro arriba o ingresando registros manuales.")
-        df_vacio = pd.DataFrame(columns=["CUIL", "Legajo", "Dependencia", "CBU", "Forma Pago (1 o 3)"])
-        df_editado = st.data_editor(df_vacio, num_rows="dynamic", use_container_width=True)
-        if st.button("💾 Guardar Primer Registro"):
-            nuevo_dict = {}
-            for _, r in df_editado.iterrows():
-                c_clean = limpiar_cuit(r["CUIL"])
-                if c_clean and len(c_clean) == 11:
-                    nuevo_dict[c_clean] = {
-                        "legajo": str(r["Legajo"]).strip(),
-                        "dependencia": str(r["Dependencia"]).strip(),
-                        "cbu": str(r["CBU"]).strip(),
-                        "forma_pago": str(r["Forma Pago (1 o 3)"]).strip()
-                    }
-            if nuevo_dict:
-                guardar_db(nuevo_dict)
-                st.success("✅ Primer registro guardado.")
-                st.rerun()
+        st.info("El repositorio está vacío. Completalo arriba o agregá registros manuales.")
 
 
 # --- PESTAÑA 1: PROCESAMIENTO DE LIQUIDACIÓN ---
@@ -223,7 +205,6 @@ with tab_liq:
     if archivo_liq:
         try:
             df_liq, hoja_liq = leer_archivo_sueldos(archivo_liq, "CUIL")
-            
             col_cuil_liq = buscar_columna(df_liq, ['CUIL'])
             col_legajo_liq = buscar_columna(df_liq, ['LEGAJO'])
             col_lugar_liq = buscar_columna(df_liq, ['LUGAR DE TRABAJO', 'DEPENDENCIA', 'SUCURSAL'])
@@ -236,12 +217,12 @@ with tab_liq:
             empleados_mes = df_liq_validos[col_cuil_liq].unique()
             cantidad_empleados = len(empleados_mes)
             
-            # --- ADUANA DE CONTROL PARA NUEVOS / TEMPORARIOS ---
+            # --- ADUANA PARA NUEVOS / TEMPORARIOS ---
             cuils_nuevos = [limpiar_cuit(c) for c in empleados_mes if limpiar_cuit(c) not in db_historica]
             
             if cuils_nuevos:
                 st.warning(f"⚠️ Se detectaron {len(cuils_nuevos)} empleados de temporada o ingresantes nuevos que no figuran en el repositorio.")
-                st.markdown("Completá sus datos mínimos comerciales a continuación para registrarlos e incluirlos en el proceso:")
+                st.markdown("Completá sus datos a continuación para registrarlos de forma permanente antes de generar el TXT:")
                 
                 nuevos_data = []
                 for c in cuils_nuevos:
@@ -262,7 +243,7 @@ with tab_liq:
                 df_nuevos_form = pd.DataFrame(nuevos_data)
                 editado_nuevos = st.data_editor(df_nuevos_form, use_container_width=True, hide_index=True, key="tabla_nuevos_mes")
                 
-                if st.button("💾 Registrar Nuevos e Incorporar", type="primary"):
+                if st.button("💾 Registrar Nuevos en Repositorio", type="primary"):
                     for _, r in editado_nuevos.iterrows():
                         c_new = r["CUIL"]
                         db_historica[c_new] = {
@@ -272,11 +253,11 @@ with tab_liq:
                             "forma_pago": str(r["Forma Pago (1=Efectivo, 3=CBU)"]).strip()
                         }
                     guardar_db(db_historica)
-                    st.sidebar.success("✅ Personal incorporado.")
+                    st.success("✅ Personal de temporada incorporado al repositorio histórico.")
                     st.rerun()
                     
             else:
-                st.success(f"✅ Los {cantidad_empleados} empleados activos este mes están correctamente identificados en el sistema.")
+                st.success(f"✅ Los {cantidad_empleados} empleados activos están identificados en el repositorio.")
                 
                 if st.button("🚀 Procesar y Generar Archivo de Importación TXT", type="primary"):
                     lineas_txt = []
@@ -292,60 +273,49 @@ with tab_liq:
                     
                     tabla_control = []
                     
-                    # ---- REGISTRO 02 ----
+                    # ---- REGISTRO 02 (100% SOBERANÍA DEL REPOSITORIO) ----
                     for cuil_raw in empleados_mes:
                         cuil_l = limpiar_cuit(cuil_raw)
+                        emp_repo = db_historica[cuil_l] # Con la aduana previa, acá existe sí o sí
                         
-                        sub_df = df_liq_validos[df_liq_validos[col_cuil_liq] == cuil_raw]
-                        row_liq = sub_df.iloc[0]
+                        # Extraemos estrictamente los valores guardados en el maestro
+                        legajo_val = emp_repo.get('legajo', '0').strip()
+                        dep_val = emp_repo.get('dependencia', 'ADMINISTRACION').strip()
+                        cbu_val = emp_repo.get('cbu', '').strip()
+                        fp_val = emp_repo.get('forma_pago', '').strip()
                         
-                        legajo_s = str(row_liq.get(col_legajo_liq, '')).replace('.0', '').strip() if col_legajo_liq else ""
-                        lugar_s = str(row_liq.get(col_lugar_liq, '')).strip() if col_lugar_liq else ""
+                        # Formateos fijos posicionales s/ manual AFIP
+                        legajo_fixed = legajo_val.rjust(10, ' ')
+                        dependencia_fixed = dep_val.ljust(50, ' ')[:50]
+                        cbu_fixed = cbu_val if len(cbu_val) == 22 else (' ' * 22)
                         
-                        if legajo_s.lower() == 'nan': legajo_s = ""
-                        if lugar_s.lower() == 'nan': lugar_s = ""
-                        
-                        emp_repo = db_historica.get(cuil_l, {})
-                        
-                        # Legajo (Sábana manda, respalda repositorio)
-                        legajo_final = legajo_s if legajo_s else emp_repo.get('legajo', '0')
-                        legajo_fixed = legajo_final.rjust(10, ' ')
-                        
-                        # Dependencia (Sábana manda, respalda repositorio)
-                        dep_final = lugar_s if lugar_s else emp_repo.get('dependencia', 'ADMINISTRACION')
-                        dependencia_fixed = dep_final.ljust(50, ' ')[:50]
-                        
-                        # CBU (Repositorio)
-                        cbu_final = emp_repo.get('cbu', '')
-                        cbu_fixed = cbu_final if len(cbu_final) == 22 else (' ' * 22)
-                        
-                        # Forma de Pago (Repositorio)
-                        fp_final = emp_repo.get('forma_pago', '')
-                        if fp_final not in ['1', '2', '3', '4']:
+                        if fp_val not in ['1', '2', '3', '4']:
                             fp_final = '3' if len(cbu_fixed.strip()) == 22 else '1'
+                        else:
+                            fp_final = fp_val
                             
                         dias_tope_fixed = str(dias_base).zfill(3)
                         
-                        # Armado final Registro 02
+                        # Construcción final del Registro 02 (115 caracteres de largo)
                         r02 = f"02{cuil_l}{legajo_fixed}{dependencia_fixed}{cbu_fixed}{dias_tope_fixed}{f_pago_txt}{f_rubrica_txt}{fp_final}"
                         lineas_txt.append(r02)
                         
                         tabla_control.append({
                             "CUIL": cuil_l,
-                            "Legajo": f"'{legajo_fixed}'",
-                            "Lugar de Trabajo": dependencia_fixed.strip(),
-                            "CBU": cbu_fixed if cbu_fixed.strip() else "[Efectivo]",
+                            "Legajo (Repo)": f"'{legajo_fixed}'",
+                            "Dependencia (Repo)": dep_val,
+                            "CBU (Repo)": cbu_fixed if cbu_fixed.strip() else "[Espacios]",
                             "Forma Pago": fp_final,
-                            "Largo": len(r02)
+                            "Largo Línea": len(r02)
                         })
                     
                     texto_final = "\n".join(lineas_txt)
-                    st.success("✅ ¡Estructura de importación completada sin alteraciones!")
+                    st.success("✅ ¡Archivo TXT generado respetando estrictamente el repositorio!")
                     
                     st.markdown("### 🔍 Vista Previa de Control")
                     st.dataframe(pd.DataFrame(tabla_control), use_container_width=True)
                     
-                    with st.expander("👀 Ver Bloque TXT Plano"):
+                    with st.expander("👀 Ver Estructura del Archivo .txt"):
                         st.code(texto_final)
                         
                     st.download_button(
