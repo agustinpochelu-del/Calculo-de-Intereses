@@ -10,13 +10,12 @@ def limpiar_cuit(cuit):
     if c.endswith('.0'): c = c[:-2]
     return c.replace("-", "").replace(" ", "").replace(".", "").zfill(11)
 
-# --- UNIFICADO: MOTOR DE LECTURA DE ARCHIVOS CON DETECCIÓN DINÁMICA ---
+# --- MOTOR DE LECTURA INTELIGENTE ---
 def cargar_dataframe_inteligente(archivo_subido, palabra_clave_columna):
-    """Revisa todas las pestañas de un Excel o un CSV buscando una columna clave."""
     nombre = archivo_subido.name.lower()
     if nombre.endswith('.xlsx') or nombre.endswith('.xls'):
         hojas = pd.read_excel(archivo_subido, sheet_name=None, dtype=str)
-        for nombre_hoja, df in hojas.items():
+        for _, df in hojas.items():
             df.columns = df.columns.astype(str).str.strip().str.upper()
             for col in df.columns:
                 if palabra_clave_columna in col.replace('.', ''):
@@ -93,16 +92,19 @@ if st.button("Procesar y Generar Registro 02", type="primary"):
                     st.error("❌ No encontré la columna CUIL en el archivo de Liquidación.")
                     st.stop()
                 
-                col_cuil_liq = next((col for col in df_liq.columns if 'CUIL' in col), None)
-                col_legajo_liq = next((col for col in df_liq.columns if 'LEGAJO' in col), None)
-                col_lugar_liq = next((col for col in df_liq.columns if 'LUGAR' in col or 'SUCURSAL' in col or 'DEPEN' in col), None)
+                # PARCHE APLICADO: IGNORA PUNTOS EN LA BÚSQUEDA
+                col_cuil_liq = next((col for col in df_liq.columns if 'CUIL' in col.replace('.', '')), None)
+                col_legajo_liq = next((col for col in df_liq.columns if 'LEGAJO' in col.replace('.', '')), None)
+                col_lugar_liq = next((col for col in df_liq.columns if 'LUGAR' in col.replace('.', '') or 'SUCURSAL' in col.replace('.', '') or 'DEPEN' in col.replace('.', '')), None)
 
-                # Filtrar empleados únicos de la liquidación del mes
+                if not col_cuil_liq:
+                    st.error("❌ Error interno: Falló la asignación de la columna CUIL de Liquidación.")
+                    st.stop()
+
                 df_liq_validos = df_liq.dropna(subset=[col_cuil_liq]).copy()
                 empleados_mes = df_liq_validos[col_cuil_liq].unique()
                 cantidad_empleados = len(empleados_mes)
 
-                # Extraer lugares de trabajo de respaldo de la sábana
                 backup_lugar = {}
                 if col_lugar_liq:
                     for _, r in df_liq_validos.iterrows():
@@ -117,13 +119,13 @@ if st.button("Procesar y Generar Registro 02", type="primary"):
                     st.error("❌ No encontré la columna CUIL en el Maestro de Empleados.")
                     st.stop()
                 
-                col_cuil_emp = next((col for col in df_emp.columns if 'CUIL' in col), None)
-                col_legajo_emp = next((col for col in df_emp.columns if 'LEGAJO' in col), None)
-                col_dep_emp = next((col for col in df_emp.columns if 'DEPEN' in col or 'REVISTA' in col), None)
-                col_cbu_emp = next((col for col in df_emp.columns if 'CBU' in col), None)
-                col_fp_emp = next((col for col in df_emp.columns if 'FORMA' in col or 'PAGO' in col), None)
+                # PARCHE APLICADO: IGNORA PUNTOS EN EL MAESTRO TAMBIÉN
+                col_cuil_emp = next((col for col in df_emp.columns if 'CUIL' in col.replace('.', '')), None)
+                col_legajo_emp = next((col for col in df_emp.columns if 'LEGAJO' in col.replace('.', '')), None)
+                col_dep_emp = next((col for col in df_emp.columns if 'DEPEN' in col.replace('.', '') or 'REVISTA' in col.replace('.', '')), None)
+                col_cbu_emp = next((col for col in df_emp.columns if 'CBU' in col.replace('.', '')), None)
+                col_fp_emp = next((col for col in df_emp.columns if 'FORMA' in col.replace('.', '') or 'PAGO' in col.replace('.', '')), None)
 
-                # Mapear el Maestro a diccionarios (Doble indexación: por CUIL y por Legajo)
                 maestro_por_cuil = {}
                 maestro_por_legajo = {}
 
@@ -152,7 +154,6 @@ if st.button("Procesar y Generar Registro 02", type="primary"):
                 # 3. CONSTRUCCIÓN DEL ARCHIVO TXT
                 lineas_txt = []
                 
-                # Registro 01
                 cuit_l = limpiar_cuit(cuit_empresa_input)
                 t_liq = tipo_liq[0]
                 r01 = f"01{cuit_l}SJ{periodo}{t_liq}{str(nro_liq).zfill(5)}{str(dias_base).zfill(2)}{str(cantidad_empleados).zfill(6)}"
@@ -167,40 +168,34 @@ if st.button("Procesar y Generar Registro 02", type="primary"):
                 for cuil_raw in empleados_mes:
                     cuil_l = limpiar_cuit(cuil_raw)
                     
-                    # Intentar buscar el legajo de respaldo en la sábana por si el CUIL no cruza directo
                     row_individual_liq = df_liq_validos[df_liq_validos[col_cuil_liq] == cuil_raw].iloc[0]
                     legajo_backup = str(row_individual_liq[col_legajo_liq]).replace('.0', '').strip() if col_legajo_liq else ""
                     if legajo_backup.lower() == 'nan': legajo_backup = ""
 
-                    # --- EJECUCIÓN DEL DOBLE MOTOR ---
+                    # DOBLE MOTOR
                     emp_data = maestro_por_cuil.get(cuil_l)
                     if not emp_data and legajo_backup:
                         emp_data = maestro_por_legajo.get(legajo_backup)
                     if not emp_data:
                         emp_data = {}
 
-                    # FORMATEO LEGAJO (Alineado a la derecha con espacios libres a la izquierda)
                     legajo_final = emp_data.get('legajo', legajo_backup)
                     if not legajo_final: legajo_final = "0"
                     legajo_fixed = legajo_final.rjust(10, ' ')
 
-                    # FORMATEO DEPENDENCIA (Prioridad Maestro, sino Sábana)
                     dep_final = emp_data.get('dependencia', backup_lugar.get(cuil_l, 'ADMINISTRACION'))
                     if not dep_final: dep_final = "ADMINISTRACION"
                     dependencia_fixed = dep_final.ljust(50, ' ')[:50]
 
-                    # FORMATEO CBU
                     cbu_final = emp_data.get('cbu', '')
                     cbu_fixed = cbu_final if len(cbu_final) == 22 else (' ' * 22)
 
-                    # FORMATEO FORMA DE PAGO
                     fp_final = emp_data.get('forma_pago', '')
                     if fp_final not in ['1', '2', '3', '4']:
                         fp_final = '3' if len(cbu_fixed.strip()) == 22 else '1'
 
                     dias_tope_fixed = str(dias_base).zfill(3)
 
-                    # Ensamblado final Registro 02
                     r02 = f"02{cuil_l}{legajo_fixed}{dependencia_fixed}{cbu_fixed}{dias_tope_fixed}{f_pago_txt}{f_rubrica_txt}{fp_final}"
                     lineas_txt.append(r02)
 
@@ -208,13 +203,13 @@ if st.button("Procesar y Generar Registro 02", type="primary"):
                         "CUIL": cuil_l,
                         "Legajo": f"'{legajo_fixed}'",
                         "Dependencia": f"'{dependencia_fixed}'",
-                        "CBU": cbu_fixed if cbu_fixed.strip() else "[Espacios en Blanco]",
+                        "CBU": cbu_fixed if cbu_fixed.strip() else "[Espacio en Blanco]",
                         "F. Pago": fp_final,
                         "Largo": len(r02)
                     })
 
                 texto_final = "\n".join(lineas_txt)
-                st.success("✅ ¡Cruce realizado con éxito de forma limpia!")
+                st.success("✅ ¡Cruce realizado con éxito!")
                 
                 st.markdown("### 🔍 Tabla de Control Técnico")
                 st.dataframe(pd.DataFrame(tabla_control), use_container_width=True)
@@ -231,4 +226,4 @@ if st.button("Procesar y Generar Registro 02", type="primary"):
                 )
 
             except Exception as e:
-                st.error(f"Error en el proceso: {e}")
+                st.error(f"Error técnico en el proceso: {e}")
