@@ -28,6 +28,41 @@ def formato_arg(numero):
 
 
 # =====================================================================================
+# TASAS POR DEFECTO ("memoria" de la app)
+#
+# Los tramos de tasa no cambian seguido. Si el Excel que subís no trae la hoja
+# "Tasas" y/o "Tasas Punitorios" (o las trae vacías), la app usa automáticamente
+# estos valores. El último tramo de cada tabla queda con "Hasta" abierto (vigente
+# hasta nuevo aviso) hasta que ARCA publique una tasa nueva.
+#
+# 🔧 Para actualizar cuando salga una tasa nueva: agregá una fila al final de la
+# lista correspondiente (Desde, Hasta, Tasa_Diaria, dias) y cambiá el "Hasta" del
+# tramo anterior a la fecha en que terminó de regir.
+# =====================================================================================
+TASAS_RESARCITORIAS_DEFAULT = [
+    {"Desde": "2024-04-29", "Hasta": "2024-05-31", "Tasa_Diaria": 0.00402333, "dias": 32},
+    {"Desde": "2024-06-01", "Hasta": "2024-07-31", "Tasa_Diaria": 0.00213667, "dias": 60},
+    {"Desde": "2024-08-01", "Hasta": "2024-09-30", "Tasa_Diaria": 0.00213667, "dias": 60},
+    {"Desde": "2024-10-01", "Hasta": "2024-11-30", "Tasa_Diaria": 0.00213667, "dias": 60},
+    {"Desde": "2024-12-01", "Hasta": "2025-01-31", "Tasa_Diaria": 0.00249000, "dias": 61},
+    {"Desde": "2025-02-01", "Hasta": "2025-02-28", "Tasa_Diaria": 0.00242000, "dias": 28},
+    {"Desde": "2025-03-01", "Hasta": "2025-06-30", "Tasa_Diaria": 0.00133333, "dias": 122},
+    {"Desde": "2025-07-01", "Hasta": "2029-12-31", "Tasa_Diaria": 0.00091667, "dias": 253},  # vigente hasta nuevo aviso
+]
+
+TASAS_PUNITORIAS_DEFAULT = [
+    {"Desde": "2026-01-01", "Hasta": "2050-12-31", "Tasa_Diaria": 0.00116667, "dias": 207},  # vigente hasta nuevo aviso
+]
+
+
+def _tabla_default_a_df(tramos):
+    df = pd.DataFrame(tramos)
+    df['Desde'] = pd.to_datetime(df['Desde'])
+    df['Hasta'] = pd.to_datetime(df['Hasta'])
+    return df
+
+
+# =====================================================================================
 # MOTOR DE CÁLCULO (compartido por las dos lengüetas)
 # =====================================================================================
 def calcular_interes(fecha_inicio_calculo, fecha_fin_calculo, capital, df_tabla_tasas):
@@ -53,14 +88,21 @@ def calcular_interes(fecha_inicio_calculo, fecha_fin_calculo, capital, df_tabla_
     return round(interes_acumulado, 2)
 
 
-def cargar_tasas(archivo_subido, hoja):
-    df = pd.read_excel(archivo_subido, sheet_name=hoja)
-    df.columns = df.columns.str.strip()
-    df = df.rename(columns={'Dias': 'dias'})
-    df = df[df['Desde'].notna() & (df['Desde'] != 'Total')].copy()
-    df['Desde'] = pd.to_datetime(df['Desde'])
-    df['Hasta'] = pd.to_datetime(df['Hasta'])
-    return df
+def cargar_tasas(archivo_subido, hoja, tramos_default):
+    """Lee la hoja de tasas del Excel subido. Si la hoja no existe o está vacía,
+    devuelve la tabla por defecto guardada en la app (ver TASAS_*_DEFAULT arriba)."""
+    try:
+        df = pd.read_excel(archivo_subido, sheet_name=hoja)
+        df.columns = df.columns.str.strip()
+        df = df.rename(columns={'Dias': 'dias'})
+        df = df[df['Desde'].notna() & (df['Desde'] != 'Total')].copy()
+        if df.empty:
+            raise ValueError("hoja de tasas vacía")
+        df['Desde'] = pd.to_datetime(df['Desde'])
+        df['Hasta'] = pd.to_datetime(df['Hasta'])
+        return df, False
+    except Exception:
+        return _tabla_default_a_df(tramos_default), True
 
 
 def mostrar_tabla_tasas(df_tasas_res, df_tasas_pun, ultima_fecha_demanda, fecha_inicio_punitorios_global, ultima_fecha_liq,
@@ -122,8 +164,12 @@ def boton_descarga(df_deudas, nombre_archivo):
 # =====================================================================================
 def procesar_juicio_capital(archivo_subido):
     df_deudas = pd.read_excel(archivo_subido, sheet_name='Deudas')
-    df_tasas_res = cargar_tasas(archivo_subido, 'Tasas')
-    df_tasas_pun = cargar_tasas(archivo_subido, 'Tasas Punitorios')
+    df_tasas_res, uso_default_res = cargar_tasas(archivo_subido, 'Tasas', TASAS_RESARCITORIAS_DEFAULT)
+    df_tasas_pun, uso_default_pun = cargar_tasas(archivo_subido, 'Tasas Punitorios', TASAS_PUNITORIAS_DEFAULT)
+    if uso_default_res:
+        st.info("ℹ️ No se encontraron tasas resarcitorias en el archivo: se usaron las tasas por defecto guardadas en la app.")
+    if uso_default_pun:
+        st.info("ℹ️ No se encontraron tasas punitorias en el archivo: se usaron las tasas por defecto guardadas en la app.")
 
     df_deudas.columns = df_deudas.columns.str.strip()
     df_deudas = df_deudas.dropna(subset=['Vencimiento'])
@@ -236,8 +282,12 @@ def procesar_juicio_capital(archivo_subido):
 # =====================================================================================
 def procesar_juicio_intereses(archivo_subido):
     df_deudas = pd.read_excel(archivo_subido, sheet_name='Deudas')
-    df_tasas_res = cargar_tasas(archivo_subido, 'Tasas')
-    df_tasas_pun = cargar_tasas(archivo_subido, 'Tasas Punitorios')
+    df_tasas_res, uso_default_res = cargar_tasas(archivo_subido, 'Tasas', TASAS_RESARCITORIAS_DEFAULT)
+    df_tasas_pun, uso_default_pun = cargar_tasas(archivo_subido, 'Tasas Punitorios', TASAS_PUNITORIAS_DEFAULT)
+    if uso_default_res:
+        st.info("ℹ️ No se encontraron tasas resarcitorias en el archivo: se usaron las tasas por defecto guardadas en la app.")
+    if uso_default_pun:
+        st.info("ℹ️ No se encontraron tasas punitorias en el archivo: se usaron las tasas por defecto guardadas en la app.")
 
     df_deudas.columns = df_deudas.columns.str.strip()
     df_deudas = df_deudas.dropna(subset=['Vencimiento'])
@@ -333,18 +383,32 @@ def _nota(ws, fila, rango, texto):
     ws.merge_cells(rango)
     ws.cell(row=fila, column=1, value=texto).font = Font(name=_FUENTE, italic=True, size=9, color="9CA3AF")
 
-def _hoja_tasas(wb, nombre, tasa_diaria_ejemplo, dias_ejemplo):
+def _hoja_tasas(wb, nombre, tramos_default):
     ws = wb.create_sheet(nombre)
     _estilo_header(ws, 1, ["Desde", "Hasta", "Tasa_Diaria", "Dias"])
-    _fila_ejemplo(ws, 2,
-                  [datetime.date(2025, 7, 1), datetime.date(2029, 12, 31), tasa_diaria_ejemplo, dias_ejemplo],
-                  formatos=["DD/MM/YYYY", "DD/MM/YYYY", "0.000000", "0"])
+
+    fila = 2
+    for tramo in tramos_default:
+        desde = datetime.datetime.strptime(tramo["Desde"], "%Y-%m-%d").date()
+        hasta = datetime.datetime.strptime(tramo["Hasta"], "%Y-%m-%d").date()
+        valores = [desde, hasta, tramo["Tasa_Diaria"], tramo["dias"]]
+        formatos = ["DD/MM/YYYY", "DD/MM/YYYY", "0.00000000", "0"]
+        for idx, (val, fmt) in enumerate(zip(valores, formatos), start=1):
+            celda = ws.cell(row=fila, column=idx, value=val)
+            celda.font = Font(name=_FUENTE, size=10)
+            celda.fill = PatternFill(start_color="FFF9DB", end_color="FFF9DB", fill_type="solid")
+            celda.number_format = fmt
+        fila += 1
+
     _ajustar_anchos(ws, [14, 14, 14, 10])
     ws["A1"].comment = Comment("Fecha de inicio del tramo de tasa vigente.", "Liquidador ARCA")
-    ws["B1"].comment = Comment("Fecha de fin del tramo (podés poner una fecha lejana como 31/12/2029 para el tramo vigente actual).", "Liquidador ARCA")
-    ws["C1"].comment = Comment("Tasa diaria en formato decimal. Ej: 0,0917% diario = 0.000917", "Liquidador ARCA")
-    ws["D1"].comment = Comment("Cantidad real de días calendario que abarca el tramo cuando se aplica completo (ajuste fino del cálculo). Podés dejarlo igual a Hasta-Desde si no tenés el dato exacto.", "Liquidador ARCA")
-    _nota(ws, 3, "A3:D3", "↑ Fila de ejemplo (gris/cursiva): borrala y cargá tus propios tramos de tasa. Podés agregar tantas filas como cambios de tasa haya.")
+    ws["B1"].comment = Comment("Fecha de fin del tramo. El último tramo queda con 'Hasta' abierto (vigente hasta nuevo aviso).", "Liquidador ARCA")
+    ws["C1"].comment = Comment("Tasa diaria en formato decimal, con todos los decimales posibles. Ej: 0,091667% diario = 0.00091667", "Liquidador ARCA")
+    ws["D1"].comment = Comment("Cantidad real de días calendario que abarca el tramo cuando se aplica completo (ajuste fino del cálculo).", "Liquidador ARCA")
+    _nota(ws, fila + 1, f"A{fila + 1}:D{fila + 1}",
+          "↑ Estas son las tasas vigentes conocidas (ya precargadas por defecto en la app: si dejás esta hoja vacía "
+          "o la borrás, la app las usa igual). Si sale una tasa nueva, agregá una fila debajo con el nuevo tramo "
+          "y cambiá el 'Hasta' del tramo anterior a la fecha en que dejó de regir.")
     return ws
 
 def _hoja_instrucciones(wb, titulo, lineas):
@@ -375,10 +439,12 @@ def generar_plantilla_capital():
         "  • fecha_Demanda: fecha de inicio de la demanda de ejecución fiscal",
         "  • Fecha_Liquidacion: fecha a la que querés calcular la liquidación (fecha de pago de intereses)",
         "",
-        "Completá también las hojas 'Tasas' (resarcitorios/capitalizables) y 'Tasas Punitorios' con los",
-        "tramos de tasa vigentes en el período del juicio. Cada fila es un tramo con su tasa diaria.",
+        "Completá también las hojas 'Tasas' (resarcitorios/capitalizables) y 'Tasas Punitorios'. Ya vienen",
+        "precargadas con las tasas vigentes conocidas (las mismas que la app usa por defecto): si cambia la tasa,",
+        "agregá una fila nueva al final del tramo correspondiente. Si preferís, podés dejar estas hojas tal cual",
+        "vienen, borrarlas, o directamente no completarlas: la app va a usar las tasas guardadas por defecto igual.",
         "",
-        "Borrá las filas de ejemplo (en gris/cursiva) antes de cargar tus propios datos.",
+        "Borrá la fila de ejemplo de 'Deudas' (en gris/cursiva) antes de cargar tus propios datos.",
     ])
 
     ws = wb.create_sheet("Deudas")
@@ -392,8 +458,8 @@ def generar_plantilla_capital():
     ws["F1"].comment = Comment("Dejar vacío si el capital todavía no fue pagado.", "Liquidador ARCA")
     _nota(ws, 3, "A3:H3", "↑ Fila de ejemplo: borrala y cargá tus propias obligaciones (podés agregar tantas filas como necesites).")
 
-    _hoja_tasas(wb, "Tasas", 0.000917, 253)
-    _hoja_tasas(wb, "Tasas Punitorios", 0.001167, 207)
+    _hoja_tasas(wb, "Tasas", TASAS_RESARCITORIAS_DEFAULT)
+    _hoja_tasas(wb, "Tasas Punitorios", TASAS_PUNITORIAS_DEFAULT)
 
     buffer = BytesIO()
     wb.save(buffer)
@@ -418,10 +484,12 @@ def generar_plantilla_intereses():
         "  • fecha_Demanda: fecha de inicio de la demanda de ejecución fiscal",
         "  • Fecha_Liquidacion: fecha a la que querés calcular la liquidación (fecha de pago de intereses)",
         "",
-        "Completá también las hojas 'Tasas' (resarcitorios) y 'Tasas Punitorios' con los tramos de",
-        "tasa vigentes en el período del juicio. Cada fila es un tramo con su tasa diaria.",
+        "Completá también las hojas 'Tasas' (resarcitorios) y 'Tasas Punitorios'. Ya vienen precargadas con",
+        "las tasas vigentes conocidas (las mismas que la app usa por defecto): si cambia la tasa, agregá una",
+        "fila nueva al final del tramo correspondiente. Si preferís, podés dejar estas hojas tal cual vienen,",
+        "borrarlas, o directamente no completarlas: la app va a usar las tasas guardadas por defecto igual.",
         "",
-        "Borrá las filas de ejemplo (en gris/cursiva) antes de cargar tus propios datos.",
+        "Borrá la fila de ejemplo de 'Deudas' (en gris/cursiva) antes de cargar tus propios datos.",
     ])
 
     ws = wb.create_sheet("Deudas")
@@ -434,8 +502,8 @@ def generar_plantilla_intereses():
     _ajustar_anchos(ws, [26, 24, 12, 14, 16, 14, 16])
     _nota(ws, 3, "A3:G3", "↑ Fila de ejemplo: borrala y cargá tus propias obligaciones (podés agregar tantas filas como necesites).")
 
-    _hoja_tasas(wb, "Tasas", 0.000917, 253)
-    _hoja_tasas(wb, "Tasas Punitorios", 0.001167, 207)
+    _hoja_tasas(wb, "Tasas", TASAS_RESARCITORIAS_DEFAULT)
+    _hoja_tasas(wb, "Tasas Punitorios", TASAS_PUNITORIAS_DEFAULT)
 
     buffer = BytesIO()
     wb.save(buffer)
