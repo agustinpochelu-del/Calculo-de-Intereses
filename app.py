@@ -1,6 +1,11 @@
 import streamlit as st
 import pandas as pd
 from io import BytesIO
+import datetime
+import openpyxl
+from openpyxl.styles import Font, PatternFill, Alignment
+from openpyxl.comments import Comment
+from openpyxl.utils import get_column_letter
 
 # --- CONFIGURACIÓN DE LA PÁGINA ---
 st.set_page_config(page_title="Liquidador ARCA - Judicial", page_icon="⚖️", layout="wide")
@@ -298,12 +303,159 @@ def procesar_juicio_intereses(archivo_subido):
 
 
 # =====================================================================================
+# GENERADOR DE PLANTILLAS EN BLANCO (para descargar y completar)
+# =====================================================================================
+_AZUL_HEADER = "1E3A8A"
+_GRIS_EJEMPLO = "F0F4F8"
+_FUENTE = "Arial"
+
+def _estilo_header(ws, fila, columnas):
+    for idx, col in enumerate(columnas, start=1):
+        celda = ws.cell(row=fila, column=idx, value=col)
+        celda.font = Font(name=_FUENTE, bold=True, color="FFFFFF", size=11)
+        celda.fill = PatternFill(start_color=_AZUL_HEADER, end_color=_AZUL_HEADER, fill_type="solid")
+        celda.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    ws.row_dimensions[fila].height = 30
+
+def _fila_ejemplo(ws, fila, valores, formatos=None):
+    for idx, val in enumerate(valores, start=1):
+        celda = ws.cell(row=fila, column=idx, value=val)
+        celda.font = Font(name=_FUENTE, italic=True, color="6B7280", size=10)
+        celda.fill = PatternFill(start_color=_GRIS_EJEMPLO, end_color=_GRIS_EJEMPLO, fill_type="solid")
+        if formatos and formatos[idx - 1]:
+            celda.number_format = formatos[idx - 1]
+
+def _ajustar_anchos(ws, anchos):
+    for idx, ancho in enumerate(anchos, start=1):
+        ws.column_dimensions[get_column_letter(idx)].width = ancho
+
+def _nota(ws, fila, rango, texto):
+    ws.merge_cells(rango)
+    ws.cell(row=fila, column=1, value=texto).font = Font(name=_FUENTE, italic=True, size=9, color="9CA3AF")
+
+def _hoja_tasas(wb, nombre, tasa_diaria_ejemplo, dias_ejemplo):
+    ws = wb.create_sheet(nombre)
+    _estilo_header(ws, 1, ["Desde", "Hasta", "Tasa_Diaria", "Dias"])
+    _fila_ejemplo(ws, 2,
+                  [datetime.date(2025, 7, 1), datetime.date(2029, 12, 31), tasa_diaria_ejemplo, dias_ejemplo],
+                  formatos=["DD/MM/YYYY", "DD/MM/YYYY", "0.000000", "0"])
+    _ajustar_anchos(ws, [14, 14, 14, 10])
+    ws["A1"].comment = Comment("Fecha de inicio del tramo de tasa vigente.", "Liquidador ARCA")
+    ws["B1"].comment = Comment("Fecha de fin del tramo (podés poner una fecha lejana como 31/12/2029 para el tramo vigente actual).", "Liquidador ARCA")
+    ws["C1"].comment = Comment("Tasa diaria en formato decimal. Ej: 0,0917% diario = 0.000917", "Liquidador ARCA")
+    ws["D1"].comment = Comment("Cantidad real de días calendario que abarca el tramo cuando se aplica completo (ajuste fino del cálculo). Podés dejarlo igual a Hasta-Desde si no tenés el dato exacto.", "Liquidador ARCA")
+    _nota(ws, 3, "A3:D3", "↑ Fila de ejemplo (gris/cursiva): borrala y cargá tus propios tramos de tasa. Podés agregar tantas filas como cambios de tasa haya.")
+    return ws
+
+def _hoja_instrucciones(wb, titulo, lineas):
+    ws = wb.create_sheet("Instrucciones", 0)
+    ws["A1"] = titulo
+    ws["A1"].font = Font(name=_FUENTE, bold=True, size=14, color=_AZUL_HEADER)
+    for i, linea in enumerate(lineas, start=3):
+        ws.cell(row=i, column=1, value=linea).font = Font(name=_FUENTE, size=11)
+        ws.row_dimensions[i].height = 18
+    ws.column_dimensions["A"].width = 110
+    ws.sheet_view.showGridLines = False
+
+
+def generar_plantilla_capital():
+    wb = openpyxl.Workbook()
+    wb.remove(wb.active)
+
+    _hoja_instrucciones(wb, "Plantilla - Juicio por Capital + Intereses", [
+        "Completá la hoja 'Deudas' con una fila por cada obligación (impuesto/período) del juicio.",
+        "",
+        "Columnas de 'Deudas':",
+        "  • Impuesto: nombre del impuesto (ej: IMPUESTO A LAS GANANCIAS, IVA, etc.)",
+        "  • concepto: detalle del concepto (ej: Saldo DDJJ, Anticipo, etc.)",
+        "  • Periodo: período fiscal (ej: 2024-1)",
+        "  • Vencimiento: fecha de vencimiento original de la obligación",
+        "  • Capital: monto de capital adeudado (impuesto original, sin intereses)",
+        "  • F. Pago Capital: fecha en que se pagó el capital. DEJAR VACÍO si el capital todavía no fue pagado.",
+        "  • fecha_Demanda: fecha de inicio de la demanda de ejecución fiscal",
+        "  • Fecha_Liquidacion: fecha a la que querés calcular la liquidación (fecha de pago de intereses)",
+        "",
+        "Completá también las hojas 'Tasas' (resarcitorios/capitalizables) y 'Tasas Punitorios' con los",
+        "tramos de tasa vigentes en el período del juicio. Cada fila es un tramo con su tasa diaria.",
+        "",
+        "Borrá las filas de ejemplo (en gris/cursiva) antes de cargar tus propios datos.",
+    ])
+
+    ws = wb.create_sheet("Deudas")
+    _estilo_header(ws, 1, ["Impuesto", "concepto", "Periodo", "Vencimiento", "Capital", "F. Pago Capital", "fecha_Demanda", "Fecha_Liquidacion"])
+    _fila_ejemplo(ws, 2,
+                  ["IMPUESTO A LAS GANANCIAS", "Saldo DDJJ", "2024-1",
+                   datetime.date(2024, 5, 20), 150000.00, None,
+                   datetime.date(2025, 1, 15), datetime.date(2025, 6, 30)],
+                  formatos=[None, None, None, "DD/MM/YYYY", "#,##0.00", "DD/MM/YYYY", "DD/MM/YYYY", "DD/MM/YYYY"])
+    _ajustar_anchos(ws, [26, 20, 12, 14, 16, 16, 14, 16])
+    ws["F1"].comment = Comment("Dejar vacío si el capital todavía no fue pagado.", "Liquidador ARCA")
+    _nota(ws, 3, "A3:H3", "↑ Fila de ejemplo: borrala y cargá tus propias obligaciones (podés agregar tantas filas como necesites).")
+
+    _hoja_tasas(wb, "Tasas", 0.000917, 253)
+    _hoja_tasas(wb, "Tasas Punitorios", 0.001167, 207)
+
+    buffer = BytesIO()
+    wb.save(buffer)
+    return buffer.getvalue()
+
+
+def generar_plantilla_intereses():
+    wb = openpyxl.Workbook()
+    wb.remove(wb.active)
+
+    _hoja_instrucciones(wb, "Plantilla - Juicio a los Intereses", [
+        "Usá esta planilla cuando el capital impositivo original YA fue pagado, y el juicio se inicia",
+        "por los intereses resarcitorios que quedaron impagos (esos intereses pasan a ser la nueva",
+        "'base' de la deuda). No incluye columna de pago de capital porque no aplica en este caso.",
+        "",
+        "Columnas de 'Deudas':",
+        "  • Impuesto: nombre del impuesto (ej: IMPUESTO A LAS GANANCIAS, IVA, etc.)",
+        "  • concepto: detalle del concepto (ej: INTERESES Capitalizables)",
+        "  • Periodo: período fiscal de origen (ej: 2025-1)",
+        "  • Vencimiento: fecha desde la que corren los intereses sobre este monto (vencimiento de origen)",
+        "  • Capital: monto de intereses adeudados que se convierte en la base de este juicio",
+        "  • fecha_Demanda: fecha de inicio de la demanda de ejecución fiscal",
+        "  • Fecha_Liquidacion: fecha a la que querés calcular la liquidación (fecha de pago de intereses)",
+        "",
+        "Completá también las hojas 'Tasas' (resarcitorios) y 'Tasas Punitorios' con los tramos de",
+        "tasa vigentes en el período del juicio. Cada fila es un tramo con su tasa diaria.",
+        "",
+        "Borrá las filas de ejemplo (en gris/cursiva) antes de cargar tus propios datos.",
+    ])
+
+    ws = wb.create_sheet("Deudas")
+    _estilo_header(ws, 1, ["Impuesto", "concepto", "Periodo", "Vencimiento", "Capital", "fecha_Demanda", "Fecha_Liquidacion"])
+    _fila_ejemplo(ws, 2,
+                  ["IMPUESTO A LAS GANANCIAS", "INTERESES Capitalizables", "2025-1",
+                   datetime.date(2025, 6, 17), 3837980.63,
+                   datetime.date(2026, 3, 13), datetime.date(2026, 7, 30)],
+                  formatos=[None, None, None, "DD/MM/YYYY", "#,##0.00", "DD/MM/YYYY", "DD/MM/YYYY"])
+    _ajustar_anchos(ws, [26, 24, 12, 14, 16, 14, 16])
+    _nota(ws, 3, "A3:G3", "↑ Fila de ejemplo: borrala y cargá tus propias obligaciones (podés agregar tantas filas como necesites).")
+
+    _hoja_tasas(wb, "Tasas", 0.000917, 253)
+    _hoja_tasas(wb, "Tasas Punitorios", 0.001167, 207)
+
+    buffer = BytesIO()
+    wb.save(buffer)
+    return buffer.getvalue()
+
+
+# =====================================================================================
 # INTERFAZ: DOS LENGÜETAS
 # =====================================================================================
 tab1, tab2 = st.tabs(["💰 Juicio por Capital + Intereses", "📈 Juicio a los Intereses"])
 
 with tab1:
     st.markdown("Subí el Excel con las hojas **Deudas**, **Tasas** y **Tasas Punitorios** (formato con Capital impositivo).")
+    st.download_button(
+        label="📄 Descargar plantilla en blanco",
+        data=generar_plantilla_capital(),
+        file_name="Plantilla_Juicio_Capital_Intereses.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        key="plantilla_capital"
+    )
     archivo_1 = st.file_uploader("Arrastrá tu Excel aquí", type=["xlsx"], key="uploader_capital")
     if archivo_1 is not None:
         try:
@@ -314,6 +466,13 @@ with tab1:
 
 with tab2:
     st.markdown("Subí el Excel con las hojas **Deudas**, **Tasas** y **Tasas Punitorios** (formato donde 'Capital' es el monto de intereses adeudados; el capital impositivo original ya está pago).")
+    st.download_button(
+        label="📄 Descargar plantilla en blanco",
+        data=generar_plantilla_intereses(),
+        file_name="Plantilla_Juicio_Intereses.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        key="plantilla_intereses"
+    )
     archivo_2 = st.file_uploader("Arrastrá tu Excel aquí", type=["xlsx"], key="uploader_intereses")
     if archivo_2 is not None:
         try:
