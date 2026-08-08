@@ -31,12 +31,11 @@ formato_arg()                     # formatea números en pesos arg ($1.234,56)
 dias_arca()                       # convención de días de ARCA (ver punto 4)
 calcular_interes()                # MOTOR NUMÉRICO. Recibe (inicio, fin, capital, tabla_tasas)
                                   # y devuelve (interés, días) por tramos de tasa.
-_normalizar_tabla_tasas()         # deriva la tasa diaria de la mensual, ordena tramos,
-                                  # y acepta el formato viejo con Tasa_Diaria truncada.
-cargar_tasas()                    # lee hoja Tasas/Tasas Punitorios del Excel subido;
-                                  # si no existe o está vacía, cae a TASAS_*_DEFAULT.
+cargar_tasas()                    # lee tasas.json, arma las dos tablas y verifica que
+                                  # los tramos empalmen (ver punto 7)
 validar_deudas()                  # chequea la hoja Deudas y devuelve problemas concretos
-verificar_tabla_tasas()           # avisa huecos entre tramos y tramos sin días oficiales
+avisar_tramos_sin_dias()          # avisa si hubo que usar un tramo completo sin los
+                                  # días oficiales de ARCA
 
 mostrar_tabla_tasas()             # UI: cuadro de tasas de referencia al pie de cada resultado
 boton_descarga()                  # UI: arma el Excel liquidado (openpyxl) con fila de totales
@@ -53,8 +52,15 @@ _hoja_tasas(), _hoja_instrucciones()  # helpers de openpyxl para armar las plant
 generar_plantilla_capital()       # arma el .xlsx en blanco para la Lengüeta 1
 generar_plantilla_intereses()     # arma el .xlsx en blanco para la Lengüeta 2
 
-TASAS_RESARCITORIAS_DEFAULT       # constantes con los tramos de tasa "conocidos" (ver punto 7)
-TASAS_PUNITORIAS_DEFAULT
+```
+
+Archivos que acompañan a `app.py`:
+
+```
+tasas.json                        # las tasas. UNICO lugar donde se actualizan (punto 7)
+actualizar_tasas.py               # compara tasas.json contra la página de ARCA
+test_motor.py                     # regresión contra las liquidaciones reales de ARCA
+.github/workflows/control-tasas.yml   # corre el control una vez por semana
 ```
 
 ## 4. Cómo cuenta los días ARCA (la parte más delicada)
@@ -131,38 +137,66 @@ columna `Capital` (que en ese formato ya es un monto de intereses).
 
 **Hoja `Deudas`** — Lengüeta 2: igual pero **sin** `F. Pago Capital`.
 
-**Hojas `Tasas` y `Tasas Punitorios`** (mismo formato en ambas lengüetas):
-`Desde | Hasta | Tasa_Mensual | Dias`.
-
-- `Tasa_Mensual` es el porcentaje mensual tal como lo publica ARCA (ej. `2.75`). La tasa diaria se
-  deriva dividiendo por 30 en el momento del cálculo, **sin truncar**.
-- `Dias` son los días oficiales del tramo completo (punto 4c). Se deja vacío en el tramo abierto.
-
-Los archivos viejos con `Tasa_Diaria` se siguen leyendo: la app reconstruye la mensual redondeando
-a dos decimales, que es como ARCA la publica (`0,000917 × 30 = 2,751 → 2,75`), y vuelve a derivar
-la diaria sin truncar.
+**No hay que cargar tasas en el Excel.** La app las tiene (punto 7). Si el archivo trae
+hojas `Tasas` de una plantilla vieja, se ignoran y la app lo avisa en pantalla: una hoja
+desactualizada metida en el medio cambiaría un importe que va a un expediente sin que
+nadie lo note.
 
 **Salida**: el Excel descargado incluye columnas `Dias_Resarcitorios`, `Dias_Capitalizables` y
 `Dias_Punitorios` para poder auditar de dónde sale cada importe, más una fila de totales con
 importes (no fórmulas, para que se lea igual en cualquier visor).
 
-## 7. Tasas por defecto ("memoria" de la app)
+## 7. Tasas: `tasas.json`
 
-Como los tramos de tasa cambian poco, están **hardcodeadas** en `app.py` (constantes
-`TASAS_RESARCITORIAS_DEFAULT` / `TASAS_PUNITORIAS_DEFAULT`, arriba del todo). Si el Excel subido no
-trae hoja de tasas (o la trae vacía), `cargar_tasas()` cae automáticamente a estos valores y la UI
-muestra un aviso. El último tramo de cada tabla queda con `Hasta` abierto (2029-12-31 /
-2050-12-31) representando "vigente hasta nuevo aviso".
+Las tasas viven en **`tasas.json`**, al lado de `app.py`. Es el único lugar donde se
+actualizan, y replica la tabla "Evolución de Tasas de Intereses" que publica ARCA: una
+fila por tramo, con la resarcitoria y la punitoria juntas, igual que en el original.
+Están cargados los **42 tramos**, desde 1901 hasta el vigente.
 
-**Para actualizar cuando salga una tasa nueva**: agregar una fila a la lista correspondiente y
-cerrar el `Hasta` del tramo anterior con el día en que dejó de regir, anotándole los `Dias` que
-informe el detalle de cálculo de ARCA. Mismo criterio para las plantillas descargables, que
-precargan estas mismas tablas.
+```json
+{ "desde": "2025-07-01", "hasta": "2999-12-31", "norma": "R (MEC) 823/2025",
+  "resarcitoria_mensual": 2.75, "punitoria_mensual": 3.5, "dias": null }
+```
+
+- `hasta` es inclusivo y los tramos tienen que empalmar (`hasta` + 1 día = `desde` del
+  siguiente). `cargar_tasas()` lo verifica al arrancar y corta con un error si no cierra.
+- Las tasas son **mensuales en porcentaje**, como las publica ARCA; la diaria se deriva
+  dividiendo por 30 sin truncar.
+- `dias` son los días oficiales del tramo completo (punto 4c). ARCA **no los publica** en
+  la tabla de tasas: salen del detalle de cálculo. Los tramos sin el dato quedan en `null`
+  y la app cuenta sola, avisando en pantalla si le tocó usar uno completo sin él.
+- El tramo vigente cierra en `2999-12-31`, tal como lo publica ARCA. Internamente se
+  recorta a 2262 porque pandas no puede representar fechas más lejanas.
+
+### Actualización automática
+
+`actualizar_tasas.py` baja la tabla oficial y la compara con `tasas.json`. Solo usa la
+librería estándar, así que corre en cualquier Python 3:
+
+```
+python actualizar_tasas.py              # solo informa
+python actualizar_tasas.py --escribir   # además actualiza tasas.json
+```
+
+`.github/workflows/control-tasas.yml` lo corre **todos los lunes a las 9 de la mañana**
+(también se puede disparar a mano desde la pestaña Actions). Si encuentra una tasa nueva:
+
+1. deja el cambio hecho en una rama `tasas/AAAA-MM-DD`,
+2. abre un issue con el link para crear el pull request y el detalle de lo que cambió.
+
+**No mergea solo, a propósito**: la tasa entra en liquidaciones que van a un expediente,
+así que la última palabra la tiene una persona. Si la página no responde o cambia de
+formato, abre un issue avisando y la app sigue liquidando con las últimas tasas
+verificadas.
+
+Cuando entra un tramo nuevo llega sin el campo `dias`. Para dejarlo exacto hay que pedirle
+a ARCA un detalle de cálculo que atraviese ese tramo y copiar el número.
 
 ## 8. Deployment
 
 - Repo en GitHub, deployado en Streamlit (Community Cloud u otro — confirmar con Agustín).
-- Dependencias: `streamlit`, `pandas`, `openpyxl`.
+- Dependencias: `streamlit`, `pandas`, `openpyxl`. El control de tasas no suma ninguna
+  (solo librería estándar).
 - Sin base de datos ni almacenamiento persistente: todo el estado vive en el Excel que sube el
   usuario en cada corrida, más las constantes de tasas embebidas en el código.
 - Sin autenticación conocida en esta app (confirmar si hace falta agregar).
@@ -172,8 +206,9 @@ precargan estas mismas tablas.
 1. **Confirmar el capital de la liquidación de anticipos de Ganancias.** ARCA liquidó sobre
    $366.033,27 y el Excel de entrada dice $336.033,27 — diferencia exacta de $30.000, con los
    dígitos 3 y 6 dados vuelta. Es un dato de origen, no un problema de cálculo.
-2. Evaluar si conviene mover `TASAS_*_DEFAULT` a un archivo de config aparte (JSON/YAML) en vez de
-   constantes en `app.py`, para que actualizar una tasa no requiera tocar el código Python.
+2. Completar el campo `dias` de los tramos que todavía están en `null` (36 de 42). No hace falta
+   hacerlo de golpe: la app avisa en pantalla cuando le toca usar uno, y ahí se pide el detalle
+   de cálculo a ARCA. Los seis que ya están cargados cubren 2024-2025, que es lo que se usa hoy.
 3. Sumar al `test_motor.py` los casos nuevos que vayan apareciendo, en especial los que crucen
    cambios de tasa (son los que más ejercitan el motor).
 

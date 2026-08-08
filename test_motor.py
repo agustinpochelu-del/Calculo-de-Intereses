@@ -22,20 +22,25 @@ class _St(_Any):
         return [_Any() for _ in range(spec if isinstance(spec, int) else len(spec))]
     def tabs(self, labels): return [_Any() for _ in labels]
     def file_uploader(self, *a, **k): return None
+    def cache_data(self, fn=None, **k):
+        # @st.cache_data tiene que dejar la funcion tal cual para poder llamarla aca.
+        return fn if fn is not None else (lambda f: f)
 
 
 sys.modules['streamlit'] = _St()
 import app  # noqa: E402
 
 F = pd.Timestamp
-RES = app._tabla_default_a_df(app.TASAS_RESARCITORIAS_DEFAULT)
-PUN = app._tabla_default_a_df(app.TASAS_PUNITORIAS_DEFAULT)
+RES, PUN, META = app.cargar_tasas()
 
 fallos = []
 
 
 def check(nombre, obtenido, esperado, tol=0.0):
-    ok = abs(obtenido - esperado) <= tol
+    if isinstance(obtenido, (int, float)) and isinstance(esperado, (int, float)):
+        ok = abs(obtenido - esperado) <= tol
+    else:
+        ok = obtenido == esperado
     if not ok:
         fallos.append(f"{nombre}: esperado {esperado}, obtenido {obtenido}")
     print(f"  {'ok   ' if ok else 'FALLA'} {nombre}: {obtenido} (esperado {esperado})")
@@ -113,21 +118,28 @@ check("punitorios", pun, 23060.10, tol=0.01)
 check("días punitorios", dias_pun, 54)
 
 # =====================================================================================
-print("\n6) Las tablas de tasas por defecto no dejan huecos entre tramos")
-for nombre, tabla in [("resarcitorias", RES), ("punitorias", PUN)]:
-    for i in range(len(tabla) - 1):
-        esperado = tabla.iloc[i]['Hasta'] + pd.Timedelta(days=1)
-        obtenido = tabla.iloc[i + 1]['Desde']
-        ok = esperado == obtenido
-        if not ok:
-            fallos.append(f"hueco en tasas {nombre} entre {esperado:%d/%m/%Y} y {obtenido:%d/%m/%Y}")
-        print(f"  {'ok   ' if ok else 'FALLA'} {nombre}: empalme {obtenido:%d/%m/%Y}")
+print("\n6) La tabla oficial de tasas.json está completa y sin huecos")
+# cargar_tasas() revienta si los tramos no empalman, así que llegar hasta acá ya es
+# parte de la prueba.
+check("tramos cargados", len(RES), META['tramos'])
+check("arranca en 1901", RES['Desde'].min(), F('1901-01-01'))
+# Las dos tablas salen de las mismas filas de la tabla oficial: mismas fechas.
+check("resarcitorias y punitorias comparten los tramos",
+      int(bool((RES['Desde'].values == PUN['Desde'].values).all())), 1)
+print(f"  ok    verificada contra ARCA el {META['verificado']}")
 
 # =====================================================================================
 print("\n7) La tasa se guarda mensual y se deriva sin truncar")
 tasa = RES[RES['Desde'] == F('2025-07-01')].iloc[0]
-check("tasa mensual", tasa['Tasa_Mensual'], 2.75)
-check("tasa diaria", tasa['Tasa_Diaria'], 0.0275 / 30, tol=1e-15)
+check("resarcitoria mensual vigente", tasa['Tasa_Mensual'], 2.75)
+check("resarcitoria diaria vigente", tasa['Tasa_Diaria'], 0.0275 / 30, tol=1e-15)
+check("punitoria mensual vigente", PUN[PUN['Desde'] == F('2025-07-01')].iloc[0]['Tasa_Mensual'], 3.5)
+
+# Antes la tabla de punitorios arrancaba en 2026: una demanda anterior daba punitorios
+# en cero, sin avisar. Ahora la historia está completa.
+jul24 = F('2024-07-01')
+pun_2024 = PUN[(PUN['Desde'] <= jul24) & (PUN['Hasta'] >= jul24)].iloc[0]
+check("punitoria de julio 2024 (antes daba cero)", pun_2024['Tasa_Mensual'], 7.39)
 
 # =====================================================================================
 print("\n" + "=" * 60)

@@ -2,6 +2,8 @@ import streamlit as st
 import pandas as pd
 from io import BytesIO
 import datetime
+import json
+import os
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment
 from openpyxl.comments import Comment
@@ -28,78 +30,97 @@ def formato_arg(numero):
 
 
 # =====================================================================================
-# TASAS POR DEFECTO ("memoria" de la app)
+# TASAS: viven en tasas.json, al lado de este archivo
+#
+# Ese archivo es el ÚNICO lugar donde se actualizan las tasas, y replica la tabla
+# "Evolución de Tasas de Intereses" que publica ARCA (una fila por tramo, con la tasa
+# resarcitoria y la punitoria juntas, igual que en el original). No hace falta cargar
+# tasas en el Excel que se sube: la app ya las tiene, desde 1901 hasta el tramo vigente.
 #
 # Las tasas se guardan como TASA MENSUAL en porcentaje, que es como las publica ARCA.
 # La tasa diaria se deriva dividiendo por 30 en el momento del cálculo, sin truncar
 # decimales (0,0275/30 y no 0,00091667: truncar movía centavos en cada línea).
 #
-# "Hasta" es INCLUSIVO: el tramo rige hasta el final de ese día, y el día siguiente
-# arranca el tramo que sigue. Por eso el "Hasta" de un tramo + 1 día tiene que dar
-# exactamente el "Desde" del tramo siguiente; si queda un hueco, se pierden días de
-# interés sin que nadie lo note.
+# "hasta" es INCLUSIVO: el tramo rige hasta el final de ese día y el siguiente arranca
+# al día siguiente, así que hasta + 1 día tiene que dar el "desde" del tramo que sigue.
+# Si queda un hueco se pierden días de interés sin que nadie lo note, y por eso la
+# continuidad se verifica al cargar.
 #
-# "Dias" es la cantidad de días que ARCA computa para el tramo COMPLETO, tal como
-# figura en el detalle de cálculo que emite. No siempre coincide con lo que daría la
-# cuenta por meses de 30 (ver dias_arca): en el bimestre 12/2024-01/2025 ARCA computa
-# 61 y no 60, en febrero 2025 computa 28 y no 30, y en 03/2025-06/2025 computa 122 y
-# no 120. Son los días oficiales del tramo y mandan sobre cualquier fórmula. Solo se
-# usan cuando el devengamiento cubre el tramo entero; para los tramos de las puntas,
-# que se cubren a medias, se cuenta con dias_arca.
+# "dias" son los días que ARCA computa para el tramo COMPLETO, tomados del detalle de
+# cálculo que emite. No siempre coinciden con lo que daría la cuenta por meses de 30
+# (ver dias_arca): en el bimestre 12/2024-01/2025 ARCA computa 61 y no 60, en febrero
+# 2025 computa 28 y no 30, y en 03/2025-06/2025 computa 122 y no 120. Son los días
+# oficiales y mandan sobre cualquier fórmula, pero solo cuando el devengamiento cubre
+# el tramo entero; en los tramos de las puntas se cuenta con dias_arca. ARCA no los
+# publica en la tabla de tasas, así que los tramos sin el dato quedan en null y la app
+# avisa en pantalla si le tocó usar uno completo sin él.
 #
-# Los tramos abiertos ("vigente hasta nuevo aviso") van sin "Dias": nunca se cubren
-# enteros, así que el dato no aplica.
-#
-# 🔧 Para actualizar cuando salga una tasa nueva: agregá una fila al final de la lista
-# correspondiente (Desde, Hasta, Tasa_Mensual) y cerrá el "Hasta" del tramo anterior
-# con el día en que dejó de regir, anotándole los "Dias" que informe ARCA.
+# 🔧 Para actualizar: correr `python actualizar_tasas.py`, que compara contra la página
+# de ARCA. El control automático de .github/workflows/control-tasas.yml lo corre solo
+# una vez por semana y avisa si aparece un tramo nuevo.
 # =====================================================================================
-TASAS_RESARCITORIAS_DEFAULT = [
-    {"Desde": "2024-04-29", "Hasta": "2024-05-31", "Tasa_Mensual": 12.07, "Dias": 32},
-    {"Desde": "2024-06-01", "Hasta": "2024-07-31", "Tasa_Mensual": 6.41, "Dias": 60},
-    {"Desde": "2024-08-01", "Hasta": "2024-09-30", "Tasa_Mensual": 6.41, "Dias": 60},
-    {"Desde": "2024-10-01", "Hasta": "2024-11-30", "Tasa_Mensual": 6.41, "Dias": 60},
-    {"Desde": "2024-12-01", "Hasta": "2025-01-31", "Tasa_Mensual": 7.47, "Dias": 61},
-    {"Desde": "2025-02-01", "Hasta": "2025-02-28", "Tasa_Mensual": 7.26, "Dias": 28},
-    {"Desde": "2025-03-01", "Hasta": "2025-06-30", "Tasa_Mensual": 4.00, "Dias": 122},
-    {"Desde": "2025-07-01", "Hasta": "2029-12-31", "Tasa_Mensual": 2.75, "Dias": None},  # vigente hasta nuevo aviso
-]
-
-TASAS_PUNITORIAS_DEFAULT = [
-    {"Desde": "2026-01-01", "Hasta": "2050-12-31", "Tasa_Mensual": 3.50, "Dias": None},  # vigente hasta nuevo aviso
-]
+ARCHIVO_TASAS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tasas.json")
 
 
-def _normalizar_tabla_tasas(df):
-    """Deja la tabla lista para el motor: fechas como datetime, tasa diaria derivada
-    de la mensual y tramos ordenados. Acepta tablas viejas que traigan Tasa_Diaria."""
-    df = df.copy()
-    df['Desde'] = pd.to_datetime(df['Desde'])
-    df['Hasta'] = pd.to_datetime(df['Hasta'])
+# ARCA cierra el tramo vigente en 2999-12-31, que pandas no puede representar (su
+# máximo es abril de 2262). Se recorta ahí: a los efectos del cálculo, cualquier fecha
+# tan lejana significa lo mismo, "vigente hasta nuevo aviso".
+_TOPE_FECHA = pd.Timestamp('2262-01-01')
 
-    if 'Tasa_Mensual' in df.columns:
-        df['Tasa_Mensual'] = pd.to_numeric(df['Tasa_Mensual'])
-        df['Tasa_Diaria'] = df['Tasa_Mensual'] / 100 / 30
-    elif 'Tasa_Diaria' in df.columns:
-        # Formato viejo, con la tasa diaria ya truncada (0,000917 en vez de 0,00091666...).
-        # ARCA publica la mensual con dos decimales, así que redondear ahí la recupera
-        # exacta (0,000917 x 30 = 2,751 -> 2,75) y se vuelve a derivar sin truncar.
-        df['Tasa_Mensual'] = (pd.to_numeric(df['Tasa_Diaria']) * 30 * 100).round(2)
-        df['Tasa_Diaria'] = df['Tasa_Mensual'] / 100 / 30
-    else:
-        raise ValueError("la tabla de tasas necesita una columna Tasa_Mensual o Tasa_Diaria")
 
-    if 'dias' in df.columns and 'Dias' not in df.columns:
-        df = df.rename(columns={'dias': 'Dias'})
-    if 'Dias' not in df.columns:
-        df['Dias'] = None
+def _fecha(iso):
+    return _TOPE_FECHA if int(iso[:4]) >= 2262 else pd.Timestamp(iso)
+
+
+def _tramos_a_df(tramos, campo_tasa):
+    """Arma la tabla de un tipo de interés (resarcitorio o punitorio) a partir de los
+    tramos de tasas.json, que traen las dos tasas en la misma fila."""
+    df = pd.DataFrame([{
+        'Desde': _fecha(t['desde']),
+        'Hasta': _fecha(t['hasta']),
+        'Norma': t.get('norma', ''),
+        'Tasa_Mensual': t[campo_tasa],
+        'Dias': t.get('dias'),
+    } for t in tramos])
+    df['Tasa_Mensual'] = pd.to_numeric(df['Tasa_Mensual'])
+    df['Tasa_Diaria'] = df['Tasa_Mensual'] / 100 / 30
     df['Dias'] = pd.to_numeric(df['Dias'], errors='coerce')
-
     return df.sort_values('Desde').reset_index(drop=True)
 
 
-def _tabla_default_a_df(tramos):
-    return _normalizar_tabla_tasas(pd.DataFrame(tramos))
+@st.cache_data
+def cargar_tasas():
+    """Lee tasas.json y devuelve (resarcitorias, punitorias, metadatos).
+
+    Si el archivo no está o está mal, no hay cálculo posible: se corta con un error
+    claro en lugar de liquidar con tasas a medias.
+    """
+    with open(ARCHIVO_TASAS, encoding='utf-8') as fh:
+        doc = json.load(fh)
+
+    tramos = doc['tramos']
+    if not tramos:
+        raise ValueError("tasas.json no tiene ningún tramo cargado")
+
+    faltan = [c for c in ('desde', 'hasta', 'resarcitoria_mensual', 'punitoria_mensual')
+              if any(c not in t for t in tramos)]
+    if faltan:
+        raise ValueError(f"hay tramos en tasas.json sin los campos: {', '.join(faltan)}")
+
+    df_res = _tramos_a_df(tramos, 'resarcitoria_mensual')
+    df_pun = _tramos_a_df(tramos, 'punitoria_mensual')
+
+    huecos = []
+    for i in range(len(df_res) - 1):
+        esperado = df_res.iloc[i]['Hasta'] + pd.Timedelta(days=1)
+        if df_res.iloc[i + 1]['Desde'] != esperado:
+            huecos.append(f"{df_res.iloc[i]['Hasta']:%d/%m/%Y} → {df_res.iloc[i + 1]['Desde']:%d/%m/%Y}")
+    if huecos:
+        raise ValueError("los tramos de tasas.json no empalman: " + "; ".join(huecos))
+
+    meta = {'verificado': doc.get('verificado', 'sin fecha'), 'fuente': doc.get('fuente', ''),
+            'tramos': len(tramos)}
+    return df_res, df_pun, meta
 
 
 # =====================================================================================
@@ -126,7 +147,7 @@ def dias_arca(desde, hasta):
     return meses * 30 + (hasta - ancla).days
 
 
-def calcular_interes(fecha_inicio_calculo, fecha_fin_calculo, capital, df_tabla_tasas):
+def calcular_interes(fecha_inicio_calculo, fecha_fin_calculo, capital, df_tabla_tasas, avisos=None):
     """Devuelve (interés, días) del período, aplicando cada tramo de tasa vigente.
 
     El interés empieza a devengar el día SIGUIENTE a la fecha de origen (el
@@ -144,6 +165,9 @@ def calcular_interes(fecha_inicio_calculo, fecha_fin_calculo, capital, df_tabla_
 
     El interés de cada tramo se redondea antes de sumarlo, igual que en el detalle
     de ARCA, donde los importes por tramo suman exacto el total informado.
+
+    Si se pasa un set en `avisos`, se le agregan los tramos que hubo que usar
+    completos sin tener cargados los días oficiales, para poder avisarlo en pantalla.
     """
     if pd.isna(fecha_inicio_calculo) or pd.isna(fecha_fin_calculo):
         return 0.0, 0
@@ -171,6 +195,8 @@ def calcular_interes(fecha_inicio_calculo, fecha_fin_calculo, capital, df_tabla_
             dias = int(tramo['Dias'])
         else:
             dias = dias_arca(inicio, fin)
+            if cubre_tramo_entero and avisos is not None:
+                avisos.add(f"{tramo_desde:%d/%m/%Y} al {tramo['Hasta']:%d/%m/%Y}")
         if dias <= 0:
             continue
 
@@ -180,25 +206,28 @@ def calcular_interes(fecha_inicio_calculo, fecha_fin_calculo, capital, df_tabla_
     return round(interes_acumulado, 2), dias_acumulados
 
 
-def cargar_tasas(archivo_subido, hoja, tramos_default):
-    """Lee la hoja de tasas del Excel subido. Si la hoja no existe o está vacía,
-    devuelve la tabla por defecto guardada en la app (ver TASAS_*_DEFAULT arriba)."""
+def avisar_hojas_de_tasas_ignoradas(archivo_subido):
+    """Los archivos armados con las plantillas viejas traen hojas de tasas. Ya no se
+    usan: la app tiene la tabla oficial completa, y una hoja desactualizada metida en
+    el medio cambiaría un importe que va a un expediente sin que nadie lo note."""
     try:
-        df = pd.read_excel(archivo_subido, sheet_name=hoja)
-        df.columns = df.columns.str.strip()
-        df = df[df['Desde'].notna() & (df['Desde'] != 'Total')].copy()
-        if df.empty:
-            raise ValueError("hoja de tasas vacía")
-        return _normalizar_tabla_tasas(df), False
+        hojas = pd.ExcelFile(archivo_subido).sheet_names
     except Exception:
-        return _tabla_default_a_df(tramos_default), True
+        return
+    viejas = [h for h in hojas if h.strip().lower().startswith('tasas')]
+    if viejas:
+        st.info(
+            f"ℹ️ Tu archivo trae la hoja **{'** y **'.join(viejas)}**. No se usa: la app "
+            f"liquida con la tabla oficial de ARCA que tiene cargada. Podés borrar esas hojas.")
 
 
-def avisar_tasas(uso_default_res, uso_default_pun):
-    if uso_default_res:
-        st.info("ℹ️ No se encontraron tasas resarcitorias en el archivo: se usaron las tasas por defecto guardadas en la app.")
-    if uso_default_pun:
-        st.info("ℹ️ No se encontraron tasas punitorias en el archivo: se usaron las tasas por defecto guardadas en la app.")
+def avisar_tramos_sin_dias(avisos):
+    if avisos:
+        st.warning(
+            "⚠️ Estos tramos se usaron completos sin tener cargados los días oficiales de "
+            "ARCA, así que la app los contó sola (meses de 30 días) y puede quedar un día "
+            f"de diferencia: **{'**, **'.join(sorted(avisos))}**. Para dejarlo exacto, pedile "
+            "a ARCA un detalle de cálculo que atraviese esos tramos y pasame el número.")
 
 
 # =====================================================================================
@@ -232,89 +261,78 @@ def validar_deudas(df, columnas_requeridas, df_tasas_res, df_tasas_pun):
         filas = ', '.join(str(i + 2) for i in df.index[liq_previa])
         problemas.append(f"La fecha de liquidación es anterior a la de demanda (filas del Excel: {filas}).")
 
-    # El último tramo de tasa tiene que llegar hasta la fecha de liquidación.
-    fin_res = df['fecha_Demanda'].max()
-    fin_pun = df['Fecha_Liquidacion'].max()
-    if fin_res > df_tasas_res['Hasta'].max():
+    # La tabla de tasas tiene que cubrir todo el período que se liquida. Hoy va de 1901
+    # al tramo vigente, así que esto no debería saltar nunca; está por si alguien recorta
+    # tasas.json y deja un caso viejo sin tasa, que se liquidaría en cero sin avisar.
+    desde_tabla, hasta_tabla = df_tasas_res['Desde'].min(), df_tasas_res['Hasta'].max()
+    if df['Vencimiento'].min() < desde_tabla:
         problemas.append(
-            f"La tabla de tasas resarcitorias termina el {df_tasas_res['Hasta'].max():%d/%m/%Y} "
-            f"y el cálculo llega hasta el {fin_res:%d/%m/%Y}: faltan tramos.")
-    if fin_pun > df_tasas_pun['Hasta'].max():
+            f"La tabla de tasas arranca el {desde_tabla:%d/%m/%Y} y hay obligaciones que "
+            f"vencen antes ({df['Vencimiento'].min():%d/%m/%Y}): faltan tramos.")
+    fin_calculo = max(df['fecha_Demanda'].max(), df['Fecha_Liquidacion'].max())
+    if fin_calculo > hasta_tabla:
         problemas.append(
-            f"La tabla de tasas punitorias termina el {df_tasas_pun['Hasta'].max():%d/%m/%Y} "
-            f"y el cálculo llega hasta el {fin_pun:%d/%m/%Y}: faltan tramos.")
+            f"La tabla de tasas termina el {hasta_tabla:%d/%m/%Y} y el cálculo llega hasta "
+            f"el {fin_calculo:%d/%m/%Y}: faltan tramos.")
 
     return problemas
-
-
-def verificar_tabla_tasas(df_tasas, nombre):
-    """Avisa si entre dos tramos consecutivos queda un hueco o una superposición, y si
-    algún tramo cerrado no tiene cargados los días oficiales de ARCA."""
-    for i in range(len(df_tasas) - 1):
-        esperado = df_tasas.iloc[i]['Hasta'] + pd.Timedelta(days=1)
-        siguiente = df_tasas.iloc[i + 1]['Desde']
-        if siguiente != esperado:
-            st.warning(
-                f"⚠️ En la tabla de {nombre} el tramo que termina el "
-                f"{df_tasas.iloc[i]['Hasta']:%d/%m/%Y} no empalma con el que arranca el "
-                f"{siguiente:%d/%m/%Y}. Revisá las fechas: así se pierden (o se duplican) días de interés.")
-
-    # El último tramo queda abierto, así que nunca se cubre entero: ahí "Dias" no aplica.
-    sin_dias = df_tasas.iloc[:-1][df_tasas.iloc[:-1]['Dias'].isna()]
-    for _, tramo in sin_dias.iterrows():
-        st.warning(
-            f"⚠️ El tramo de {nombre} del {tramo['Desde']:%d/%m/%Y} al {tramo['Hasta']:%d/%m/%Y} "
-            f"no tiene cargados los días oficiales de ARCA. La app los va a contar sola, "
-            f"pero puede quedar uno o dos días de diferencia: copiá el número del detalle de cálculo de ARCA.")
 
 
 # =====================================================================================
 # UI: TABLA DE TASAS DE REFERENCIA
 # =====================================================================================
-def mostrar_tabla_tasas(df_tasas_res, df_tasas_pun, ultima_fecha_demanda, fecha_inicio_punitorios_global, ultima_fecha_liq,
-                         titulo_res="**Resarcitorios y Capitalizables (Hasta fecha de Demanda)**"):
-    display_res = df_tasas_res.copy()
-    display_pun = df_tasas_pun.copy()
+def _recortar(df_tasas, desde, hasta):
+    """Deja solo los tramos que el cálculo efectivamente toca, con las puntas recortadas
+    a las fechas del juicio. En una punta recortada los días oficiales del tramo completo
+    ya no aplican, así que se recalculan sobre el pedazo que quedó."""
+    un_dia = pd.Timedelta(days=1)
+    df = df_tasas[(df_tasas['Hasta'] >= desde) & (df_tasas['Desde'] <= hasta)].copy()
+    if df.empty:
+        return df
+    ini = df.columns.get_loc('Desde')
+    fin = df.columns.get_loc('Hasta')
+    dias = df.columns.get_loc('Dias')
+    if df.iloc[0]['Desde'] < desde:
+        df.iloc[0, ini] = desde
+        df.iloc[0, dias] = None
+    if df.iloc[-1]['Hasta'] > hasta:
+        df.iloc[-1, fin] = hasta
+        df.iloc[-1, dias] = None
+    df['Días'] = [int(d) if pd.notna(d) else dias_arca(des, has + un_dia)
+                  for d, des, has in zip(df['Dias'], df['Desde'], df['Hasta'])]
+    return df
 
-    # Las puntas se recortan a las fechas del juicio; ahí los días oficiales del tramo
-    # completo ya no aplican y hay que recalcularlos sobre el pedazo que quedó.
-    display_res = display_res[display_res['Desde'] <= ultima_fecha_demanda].copy()
-    if not display_res.empty:
-        display_res.iloc[-1, display_res.columns.get_loc('Hasta')] = ultima_fecha_demanda
-        display_res.iloc[-1, display_res.columns.get_loc('Dias')] = None
 
-    display_pun = display_pun[display_pun['Hasta'] >= fecha_inicio_punitorios_global].copy()
-    if not display_pun.empty:
-        display_pun.iloc[0, display_pun.columns.get_loc('Desde')] = max(display_pun.iloc[0]['Desde'], fecha_inicio_punitorios_global)
-        display_pun.iloc[-1, display_pun.columns.get_loc('Hasta')] = ultima_fecha_liq
-        display_pun.iloc[0, display_pun.columns.get_loc('Dias')] = None
-        display_pun.iloc[-1, display_pun.columns.get_loc('Dias')] = None
-
+def mostrar_tabla_tasas(df_tasas_res, df_tasas_pun, meta, ventana_res, ventana_pun,
+                        titulo_res="**Resarcitorios y Capitalizables**"):
     def formatear(df):
         if df.empty:
             return df
         df = df.copy()
-        df['Días'] = [int(d) if pd.notna(d) else dias_arca(des, has + pd.Timedelta(days=1))
-                      for d, des, has in zip(df['Dias'], df['Desde'], df['Hasta'])]
-        df['Tasa mensual'] = df['Tasa_Mensual'].apply(lambda x: f"{x:.4f}%".replace('.', ','))
+        df['Tasa mensual'] = df['Tasa_Mensual'].apply(lambda x: f"{x:g}%".replace('.', ','))
         df['Tasa diaria'] = df['Tasa_Diaria'].apply(lambda x: f"{x*100:.6f}%".replace('.', ','))
         df['Desde'] = df['Desde'].dt.strftime('%d/%m/%Y')
         df['Hasta'] = df['Hasta'].dt.strftime('%d/%m/%Y')
-        return df[['Desde', 'Hasta', 'Tasa mensual', 'Tasa diaria', 'Días']]
+        cols = ['Desde', 'Hasta', 'Tasa mensual', 'Tasa diaria', 'Días']
+        if 'Norma' in df.columns:
+            cols.append('Norma')
+        return df[cols]
 
-    st.markdown("### 📈 Tasas de Interés de Referencia")
-    st.caption("Los tramos completos usan los días oficiales de ARCA. En los tramos de las puntas, "
-               "que se cubren a medias, los días se cuentan como los cuenta ARCA: cada mes completo "
-               "vale 30 días y el resto por días corridos.")
+    st.markdown("### 📈 Tasas de Interés aplicadas")
+    st.caption(
+        f"Solo los tramos que toca este cálculo. Tabla oficial de ARCA: {meta['tramos']} tramos "
+        f"cargados, verificada el {meta['verificado']}. Los tramos completos usan los días "
+        f"oficiales de ARCA; en las puntas los días se cuentan como los cuenta ARCA (cada mes "
+        f"completo vale 30 días y el resto por días corridos).")
     col_t1, col_t2 = st.columns(2)
 
     with col_t1:
         st.write(titulo_res)
-        st.dataframe(formatear(display_res), use_container_width=True, hide_index=True)
+        st.dataframe(formatear(_recortar(df_tasas_res, *ventana_res)), use_container_width=True, hide_index=True)
 
     with col_t2:
-        st.write("**Punitorios (Desde inicio de ejecución)**")
-        st.dataframe(formatear(display_pun), use_container_width=True, hide_index=True)
+        st.write("**Punitorios (desde el inicio de la ejecución)**")
+        st.dataframe(formatear(_recortar(df_tasas_pun, *ventana_pun)), use_container_width=True, hide_index=True)
 
 
 # =====================================================================================
@@ -373,11 +391,8 @@ def boton_descarga(df_deudas, nombre_archivo, columnas_moneda, columnas_totaliza
 # =====================================================================================
 def procesar_juicio_capital(archivo_subido):
     df_deudas = pd.read_excel(archivo_subido, sheet_name='Deudas')
-    df_tasas_res, uso_default_res = cargar_tasas(archivo_subido, 'Tasas', TASAS_RESARCITORIAS_DEFAULT)
-    df_tasas_pun, uso_default_pun = cargar_tasas(archivo_subido, 'Tasas Punitorios', TASAS_PUNITORIAS_DEFAULT)
-    avisar_tasas(uso_default_res, uso_default_pun)
-    verificar_tabla_tasas(df_tasas_res, "tasas resarcitorias")
-    verificar_tabla_tasas(df_tasas_pun, "tasas punitorias")
+    df_tasas_res, df_tasas_pun, meta = cargar_tasas()
+    avisar_hojas_de_tasas_ignoradas(archivo_subido)
 
     df_deudas.columns = df_deudas.columns.str.strip()
     df_deudas = df_deudas.dropna(subset=['Vencimiento'])
@@ -417,6 +432,8 @@ def procesar_juicio_capital(archivo_subido):
     #
     #   Sin fecha de Pago de Capital cargada: Resarcitorios hasta la Demanda,
     #   Punitorios desde la Demanda hasta la Liquidación, sin Capitalizables.
+    avisos = set()
+
     def procesar_fila(fila):
         vencimiento = fila['Vencimiento']
         pago_capital = fila['F. Pago Capital']
@@ -425,17 +442,17 @@ def procesar_juicio_capital(archivo_subido):
         capital = fila['Capital']
 
         if pd.isna(pago_capital):
-            resarcitorio, dias_res = calcular_interes(vencimiento, fecha_demanda, capital, df_tasas_res)
+            resarcitorio, dias_res = calcular_interes(vencimiento, fecha_demanda, capital, df_tasas_res, avisos)
             capitalizable, dias_cap = 0.0, 0
-            punitorio, dias_pun = calcular_interes(fecha_demanda, fecha_liq, capital, df_tasas_pun)
+            punitorio, dias_pun = calcular_interes(fecha_demanda, fecha_liq, capital, df_tasas_pun, avisos)
         elif fecha_demanda <= pago_capital:
-            resarcitorio, dias_res = calcular_interes(vencimiento, fecha_demanda, capital, df_tasas_res)
-            punitorio, dias_pun = calcular_interes(fecha_demanda, pago_capital, capital, df_tasas_pun)
-            capitalizable, dias_cap = calcular_interes(pago_capital, fecha_liq, resarcitorio, df_tasas_res)
+            resarcitorio, dias_res = calcular_interes(vencimiento, fecha_demanda, capital, df_tasas_res, avisos)
+            punitorio, dias_pun = calcular_interes(fecha_demanda, pago_capital, capital, df_tasas_pun, avisos)
+            capitalizable, dias_cap = calcular_interes(pago_capital, fecha_liq, resarcitorio, df_tasas_res, avisos)
         else:
-            resarcitorio, dias_res = calcular_interes(vencimiento, pago_capital, capital, df_tasas_res)
-            capitalizable, dias_cap = calcular_interes(pago_capital, fecha_demanda, resarcitorio, df_tasas_res)
-            punitorio, dias_pun = calcular_interes(fecha_demanda, fecha_liq, capital, df_tasas_pun)
+            resarcitorio, dias_res = calcular_interes(vencimiento, pago_capital, capital, df_tasas_res, avisos)
+            capitalizable, dias_cap = calcular_interes(pago_capital, fecha_demanda, resarcitorio, df_tasas_res, avisos)
+            punitorio, dias_pun = calcular_interes(fecha_demanda, fecha_liq, capital, df_tasas_pun, avisos)
 
         return pd.Series({
             'Interes_Resarcitorio': resarcitorio, 'Dias_Resarcitorios': dias_res,
@@ -462,6 +479,7 @@ def procesar_juicio_capital(archivo_subido):
     df_deudas_fmt['Fecha_Liquidacion'] = df_deudas_fmt['Fecha_Liquidacion'].dt.strftime('%d/%m/%Y')
 
     st.success("¡Liquidación judicial finalizada!")
+    avisar_tramos_sin_dias(avisos)
     st.markdown("### 📋 Resumen del Juicio")
 
     col1, col2, col3, col4 = st.columns(4)
@@ -486,7 +504,10 @@ def procesar_juicio_capital(archivo_subido):
         st.dataframe(df_deudas_fmt[columnas_detalle], use_container_width=True)
 
     st.divider()
-    mostrar_tabla_tasas(df_tasas_res, df_tasas_pun, ultima_fecha_demanda, fecha_inicio_punitorios_global, ultima_fecha_liq)
+    mostrar_tabla_tasas(
+        df_tasas_res, df_tasas_pun, meta,
+        ventana_res=(df_deudas['Vencimiento'].min(), ultima_fecha_demanda),
+        ventana_pun=(df_deudas['fecha_Demanda'].min(), ultima_fecha_liq))
 
     boton_descarga(
         df_deudas_fmt[columnas_detalle], "Liquidacion_ARCA_Apremio.xlsx",
@@ -502,11 +523,8 @@ def procesar_juicio_capital(archivo_subido):
 # =====================================================================================
 def procesar_juicio_intereses(archivo_subido):
     df_deudas = pd.read_excel(archivo_subido, sheet_name='Deudas')
-    df_tasas_res, uso_default_res = cargar_tasas(archivo_subido, 'Tasas', TASAS_RESARCITORIAS_DEFAULT)
-    df_tasas_pun, uso_default_pun = cargar_tasas(archivo_subido, 'Tasas Punitorios', TASAS_PUNITORIAS_DEFAULT)
-    avisar_tasas(uso_default_res, uso_default_pun)
-    verificar_tabla_tasas(df_tasas_res, "tasas resarcitorias")
-    verificar_tabla_tasas(df_tasas_pun, "tasas punitorias")
+    df_tasas_res, df_tasas_pun, meta = cargar_tasas()
+    avisar_hojas_de_tasas_ignoradas(archivo_subido)
 
     df_deudas.columns = df_deudas.columns.str.strip()
     df_deudas = df_deudas.dropna(subset=['Vencimiento'])
@@ -531,9 +549,11 @@ def procesar_juicio_intereses(archivo_subido):
     # continuos, sin salto de un día entre uno y el siguiente:
     #   Resarcitorios: Vencimiento -> Demanda   (sobre ese monto base)
     #   Punitorios:    Demanda -> Liquidación   (sobre ese monto base)
+    avisos = set()
+
     def procesar_fila(fila):
-        resarcitorio, dias_res = calcular_interes(fila['Vencimiento'], fila['fecha_Demanda'], fila['Capital'], df_tasas_res)
-        punitorio, dias_pun = calcular_interes(fila['fecha_Demanda'], fila['Fecha_Liquidacion'], fila['Capital'], df_tasas_pun)
+        resarcitorio, dias_res = calcular_interes(fila['Vencimiento'], fila['fecha_Demanda'], fila['Capital'], df_tasas_res, avisos)
+        punitorio, dias_pun = calcular_interes(fila['fecha_Demanda'], fila['Fecha_Liquidacion'], fila['Capital'], df_tasas_pun, avisos)
         return pd.Series({
             'Interes_Resarcitorio': resarcitorio, 'Dias_Resarcitorios': dias_res,
             'Interes_Punitorio': punitorio, 'Dias_Punitorios': dias_pun,
@@ -554,6 +574,7 @@ def procesar_juicio_intereses(archivo_subido):
     df_deudas_fmt['Fecha_Liquidacion'] = df_deudas_fmt['Fecha_Liquidacion'].dt.strftime('%d/%m/%Y')
 
     st.success("¡Liquidación judicial finalizada!")
+    avisar_tramos_sin_dias(avisos)
     st.markdown("### 📋 Resumen del Juicio (a los Intereses)")
 
     col1, col2, col3 = st.columns(3)
@@ -577,8 +598,11 @@ def procesar_juicio_intereses(archivo_subido):
         st.dataframe(df_deudas_fmt[columnas_detalle], use_container_width=True)
 
     st.divider()
-    mostrar_tabla_tasas(df_tasas_res, df_tasas_pun, ultima_fecha_demanda, fecha_inicio_punitorios_global, ultima_fecha_liq,
-                         titulo_res="**Resarcitorios (Hasta fecha de Demanda)**")
+    mostrar_tabla_tasas(
+        df_tasas_res, df_tasas_pun, meta,
+        ventana_res=(df_deudas['Vencimiento'].min(), ultima_fecha_demanda),
+        ventana_pun=(df_deudas['fecha_Demanda'].min(), ultima_fecha_liq),
+        titulo_res="**Resarcitorios**")
 
     boton_descarga(
         df_deudas_fmt[columnas_detalle], "Liquidacion_ARCA_Intereses.xlsx",
@@ -617,34 +641,6 @@ def _nota(ws, fila, rango, texto):
     ws.merge_cells(rango)
     ws.cell(row=fila, column=1, value=texto).font = Font(name=_FUENTE, italic=True, size=9, color="9CA3AF")
 
-def _hoja_tasas(wb, nombre, tramos_default):
-    ws = wb.create_sheet(nombre)
-    _estilo_header(ws, 1, ["Desde", "Hasta", "Tasa_Mensual", "Dias"])
-
-    fila = 2
-    for tramo in tramos_default:
-        desde = datetime.datetime.strptime(tramo["Desde"], "%Y-%m-%d").date()
-        hasta = datetime.datetime.strptime(tramo["Hasta"], "%Y-%m-%d").date()
-        valores = [desde, hasta, tramo["Tasa_Mensual"], tramo["Dias"]]
-        formatos = ["DD/MM/YYYY", "DD/MM/YYYY", "0.0000", "0"]
-        for idx, (val, fmt) in enumerate(zip(valores, formatos), start=1):
-            celda = ws.cell(row=fila, column=idx, value=val)
-            celda.font = Font(name=_FUENTE, size=10)
-            celda.fill = PatternFill(start_color="FFF9DB", end_color="FFF9DB", fill_type="solid")
-            celda.number_format = fmt
-        fila += 1
-
-    _ajustar_anchos(ws, [14, 14, 16, 10])
-    ws["A1"].comment = Comment("Fecha de inicio del tramo de tasa vigente.", "Liquidador ARCA")
-    ws["B1"].comment = Comment("Último día en que rige el tramo (inclusive). El día siguiente tiene que ser el 'Desde' del tramo que sigue; el último tramo queda abierto (vigente hasta nuevo aviso).", "Liquidador ARCA")
-    ws["C1"].comment = Comment("Tasa MENSUAL en porcentaje, tal como la publica ARCA. Ej: 2,75 (la app divide por 30 para obtener la diaria).", "Liquidador ARCA")
-    ws["D1"].comment = Comment("Días que computa ARCA para el tramo COMPLETO, según su detalle de cálculo. Se usa solo cuando el interés cubre el tramo entero; en los tramos de las puntas la app cuenta los días sola. Dejar vacío en el tramo abierto.", "Liquidador ARCA")
-    _nota(ws, fila + 1, f"A{fila + 1}:D{fila + 1}",
-          "↑ Estas son las tasas vigentes conocidas (ya precargadas por defecto en la app: si dejás esta hoja vacía "
-          "o la borrás, la app las usa igual). Si sale una tasa nueva, agregá una fila debajo con el nuevo tramo "
-          "y cambiá el 'Hasta' del tramo anterior al último día en que rigió.")
-    return ws
-
 def _hoja_instrucciones(wb, titulo, lineas):
     ws = wb.create_sheet("Instrucciones", 0)
     ws["A1"] = titulo
@@ -673,13 +669,12 @@ def generar_plantilla_capital():
         "  • fecha_Demanda: fecha de inicio de la demanda de ejecución fiscal",
         "  • Fecha_Liquidacion: fecha a la que querés calcular la liquidación (fecha de pago de intereses)",
         "",
-        "Completá también las hojas 'Tasas' (resarcitorios/capitalizables) y 'Tasas Punitorios'. Ya vienen",
-        "precargadas con las tasas vigentes conocidas (las mismas que la app usa por defecto): si cambia la tasa,",
-        "agregá una fila nueva al final del tramo correspondiente. Si preferís, podés dejar estas hojas tal cual",
-        "vienen, borrarlas, o directamente no completarlas: la app va a usar las tasas guardadas por defecto igual.",
+        "No hace falta cargar tasas: la app ya tiene la tabla oficial completa de ARCA, desde 1901",
+        "hasta el tramo vigente, y se actualiza sola cuando ARCA publica una tasa nueva. Si tenés una",
+        "planilla vieja con hojas 'Tasas', podés borrarlas: la app las ignora.",
         "",
-        "Los días se cuentan como los cuenta ARCA: cada mes completo vale 30 días y el resto se cuenta por días",
-        "corridos. Por eso la planilla ya no pide una columna de días: la calcula sola.",
+        "Los días se cuentan como los cuenta ARCA: cada mes completo vale 30 días y el resto por días",
+        "corridos. La app los calcula sola y los muestra en el detalle para que puedas auditarlos.",
         "",
         "Borrá la fila de ejemplo de 'Deudas' (en gris/cursiva) antes de cargar tus propios datos.",
     ])
@@ -694,9 +689,6 @@ def generar_plantilla_capital():
     _ajustar_anchos(ws, [26, 20, 12, 14, 16, 16, 14, 16])
     ws["F1"].comment = Comment("Dejar vacío si el capital todavía no fue pagado.", "Liquidador ARCA")
     _nota(ws, 3, "A3:H3", "↑ Fila de ejemplo: borrala y cargá tus propias obligaciones (podés agregar tantas filas como necesites).")
-
-    _hoja_tasas(wb, "Tasas", TASAS_RESARCITORIAS_DEFAULT)
-    _hoja_tasas(wb, "Tasas Punitorios", TASAS_PUNITORIAS_DEFAULT)
 
     buffer = BytesIO()
     wb.save(buffer)
@@ -721,13 +713,12 @@ def generar_plantilla_intereses():
         "  • fecha_Demanda: fecha de inicio de la demanda de ejecución fiscal",
         "  • Fecha_Liquidacion: fecha a la que querés calcular la liquidación (fecha de pago de intereses)",
         "",
-        "Completá también las hojas 'Tasas' (resarcitorios) y 'Tasas Punitorios'. Ya vienen precargadas con",
-        "las tasas vigentes conocidas (las mismas que la app usa por defecto): si cambia la tasa, agregá una",
-        "fila nueva al final del tramo correspondiente. Si preferís, podés dejar estas hojas tal cual vienen,",
-        "borrarlas, o directamente no completarlas: la app va a usar las tasas guardadas por defecto igual.",
+        "No hace falta cargar tasas: la app ya tiene la tabla oficial completa de ARCA, desde 1901",
+        "hasta el tramo vigente, y se actualiza sola cuando ARCA publica una tasa nueva. Si tenés una",
+        "planilla vieja con hojas 'Tasas', podés borrarlas: la app las ignora.",
         "",
-        "Los días se cuentan como los cuenta ARCA: cada mes completo vale 30 días y el resto se cuenta por días",
-        "corridos. Por eso la planilla ya no pide una columna de días: la calcula sola.",
+        "Los días se cuentan como los cuenta ARCA: cada mes completo vale 30 días y el resto por días",
+        "corridos. La app los calcula sola y los muestra en el detalle para que puedas auditarlos.",
         "",
         "Borrá la fila de ejemplo de 'Deudas' (en gris/cursiva) antes de cargar tus propios datos.",
     ])
@@ -742,9 +733,6 @@ def generar_plantilla_intereses():
     _ajustar_anchos(ws, [26, 24, 12, 14, 16, 14, 16])
     _nota(ws, 3, "A3:G3", "↑ Fila de ejemplo: borrala y cargá tus propias obligaciones (podés agregar tantas filas como necesites).")
 
-    _hoja_tasas(wb, "Tasas", TASAS_RESARCITORIAS_DEFAULT)
-    _hoja_tasas(wb, "Tasas Punitorios", TASAS_PUNITORIAS_DEFAULT)
-
     buffer = BytesIO()
     wb.save(buffer)
     return buffer.getvalue()
@@ -756,7 +744,7 @@ def generar_plantilla_intereses():
 tab1, tab2 = st.tabs(["💰 Juicio por Capital + Intereses", "📈 Juicio a los Intereses"])
 
 with tab1:
-    st.markdown("Subí el Excel con las hojas **Deudas**, **Tasas** y **Tasas Punitorios** (formato con Capital impositivo).")
+    st.markdown("Subí el Excel con la hoja **Deudas** (formato con Capital impositivo). Las tasas ya están en la app.")
     st.download_button(
         label="📄 Descargar plantilla en blanco",
         data=generar_plantilla_capital(),
@@ -773,7 +761,7 @@ with tab1:
             st.error(f"Error al procesar: {e}")
 
 with tab2:
-    st.markdown("Subí el Excel con las hojas **Deudas**, **Tasas** y **Tasas Punitorios** (formato donde 'Capital' es el monto de intereses adeudados; el capital impositivo original ya está pago).")
+    st.markdown("Subí el Excel con la hoja **Deudas** (formato donde 'Capital' es el monto de intereses adeudados; el capital impositivo original ya está pago). Las tasas ya están en la app.")
     st.download_button(
         label="📄 Descargar plantilla en blanco",
         data=generar_plantilla_intereses(),
