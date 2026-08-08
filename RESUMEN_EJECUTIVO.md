@@ -59,7 +59,10 @@ Archivos que acompañan a `app.py`:
 ```
 tasas.json                        # las tasas. UNICO lugar donde se actualizan (punto 7)
 actualizar_tasas.py               # compara tasas.json contra la página de ARCA
+acceso.py                         # puerta de acceso del estudio (punto 8)
+generar_clave.py                  # genera las credenciales para pegar en los secrets
 test_motor.py                     # regresión contra las liquidaciones reales de ARCA
+test_acceso.py                    # regresión de la puerta de acceso
 .github/workflows/control-tasas.yml   # corre el control una vez por semana
 ```
 
@@ -192,16 +195,55 @@ verificadas.
 Cuando entra un tramo nuevo llega sin el campo `dias`. Para dejarlo exacto hay que pedirle
 a ARCA un detalle de cálculo que atraviese ese tramo y copiar el número.
 
-## 8. Deployment
+## 8. Acceso
 
-- Repo en GitHub, deployado en Streamlit (Community Cloud u otro — confirmar con Agustín).
+La app es de **uso interno del estudio**: sin sesión iniciada no muestra nada
+(`acceso.py`, llamado desde `app.py` antes de dibujar las lengüetas).
+
+La puerta está en la app y **no** en la web del estudio, a propósito: la app corre en
+otro servidor, así que quien tenga la URL entra haya pasado o no por la web. Un link
+escondido detrás de una pantalla de acceso no es control de acceso.
+
+- Las credenciales **no están en el repositorio**: viven en los secrets de Streamlit.
+- De la contraseña solo se guarda un hash con **scrypt** (con sal propia por usuario),
+  del que no se puede volver a la contraseña.
+- La comparación usa `hmac.compare_digest`, y un usuario inexistente tarda lo mismo que
+  uno real para que no se pueda averiguar quién tiene cuenta.
+- A los 5 intentos fallidos bloquea 5 minutos. Es un freno, no una barrera: el bloqueo
+  vive en la sesión y se puede evitar abriendo otra. Lo que realmente frena la fuerza
+  bruta es el costo de scrypt más una contraseña larga.
+
+**Para dar de alta un usuario**: correr `python generar_clave.py`, que pide usuario y
+contraseña e imprime el bloque a pegar en Streamlit Cloud → Settings → Secrets. La
+contraseña no queda escrita en ningún archivo. Formato:
+
+```toml
+[usuarios.agustin]
+nombre = "Agustín"
+sal = "..."
+hash = "..."
+```
+
+**Para dar de baja**: borrar el bloque de los secrets.
+
+⚠️ Si no hay ningún usuario cargado, la app no arranca y muestra un error. Es a
+propósito: es preferible que no funcione a que quede abierta.
+
+`test_acceso.py` fija todo esto como regresión (`python test_acceso.py`).
+
+## 9. Deployment
+
+- Repo en GitHub, deployado en **Streamlit Community Cloud**.
+- Community Cloud no permite dominio propio: si se quiere entrar por
+  `liquidador.estudiopochelu.com`, ese subdominio tiene que **redirigir** a la URL
+  `.streamlit.app`. Para que el dominio propio quede en la barra de direcciones habría
+  que mudar la app a otro hosting.
 - Dependencias: `streamlit`, `pandas`, `openpyxl`. El control de tasas no suma ninguna
   (solo librería estándar).
 - Sin base de datos ni almacenamiento persistente: todo el estado vive en el Excel que sube el
   usuario en cada corrida, más las constantes de tasas embebidas en el código.
-- Sin autenticación conocida en esta app (confirmar si hace falta agregar).
 
-## 9. Pendientes / backlog
+## 10. Pendientes / backlog
 
 1. **Confirmar el capital de la liquidación de anticipos de Ganancias.** ARCA liquidó sobre
    $366.033,27 y el Excel de entrada dice $336.033,27 — diferencia exacta de $30.000, con los
@@ -222,7 +264,7 @@ a ARCA un detalle de cálculo que atraviese ese tramo y copiar el número.
 - ~~Tests automatizados de regresión~~ → `test_motor.py`.
 - ~~Precisión de las tasas~~ → se guardan mensuales y la diaria se deriva sin truncar.
 
-## 10. Archivos de referencia (casos reales usados para validar)
+## 11. Archivos de referencia (casos reales usados para validar)
 
 - Cuatro detalles de cálculo emitidos por ARCA el 07/08/2026, fijados en `test_motor.py`:
   - venc 13/05/2024 → demanda 13/03/2026, capital $156.366,00 (cruza los 8 tramos de tasa)

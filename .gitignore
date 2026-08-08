@@ -1,0 +1,4 @@
+# Credenciales y configuracion local: NUNCA van al repositorio.
+.streamlit/secrets.toml
+__pycache__/
+*.pyc

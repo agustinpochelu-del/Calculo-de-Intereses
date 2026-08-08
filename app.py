@@ -9,6 +9,8 @@ from openpyxl.styles import Font, PatternFill, Alignment
 from openpyxl.comments import Comment
 from openpyxl.utils import get_column_letter
 
+import acceso
+
 # --- CONFIGURACIÓN DE LA PÁGINA ---
 st.set_page_config(page_title="Liquidador ARCA — Estudio Pochelú", page_icon="⚖️", layout="wide")
 
@@ -137,6 +139,32 @@ h1, h2, h3, h4 {
 .st-key-lq-plantilla-intereses .stDownloadButton button:hover { background: #E6CE86 !important; }
 .st-key-lq-plantilla-capital .stDownloadButton button p,
 .st-key-lq-plantilla-intereses .stDownloadButton button p { color: var(--green-900) !important; }
+/* ── Pantalla de acceso ────────────────────── */
+.st-key-lq-acceso {
+  background: var(--white); border: 1px solid var(--line);
+  border-radius: var(--radius-lg); padding: 2rem 1.9rem 1.6rem;
+  box-shadow: var(--shadow-md); margin-top: 1.5rem;
+}
+.st-key-lq-acceso h3 { margin-bottom: .3rem; }
+.st-key-lq-acceso [data-testid="stForm"] { border: 0; padding: 0; }
+.st-key-lq-acceso input {
+  border-radius: 10px !important; border: 1px solid var(--line) !important;
+  background: var(--cream) !important;
+}
+.st-key-lq-acceso input:focus { border-color: var(--green-500) !important; }
+.st-key-lq-acceso button {
+  background: var(--green-800) !important; color: #fff !important;
+  border-radius: 999px !important; margin-top: .4rem;
+}
+.st-key-lq-acceso button:hover { background: var(--green-700) !important; }
+.st-key-lq-acceso button p { color: #fff !important; font-weight: 600; }
+/* Botón de salir: discreto, no compite con las acciones de la liquidación. */
+.st-key-lq_salir button {
+  background: transparent !important; color: var(--muted) !important;
+  border: 1px solid var(--line) !important; padding: .45rem 1.1rem !important;
+  font-size: .85rem;
+}
+.st-key-lq_salir button:hover { border-color: var(--green-700) !important; color: var(--green-800) !important; }
 /* ── Carga de archivo ──────────────────────── */
 [data-testid="stFileUploaderDropzone"] {
   background: var(--white); border: 1.5px dashed #C6D1CD; border-radius: var(--radius);
@@ -914,8 +942,19 @@ def generar_plantilla_intereses():
 
 
 # =====================================================================================
-# INTERFAZ: DOS LENGÜETAS
+# INTERFAZ
 # =====================================================================================
+# La app es de uso interno del estudio: sin sesión iniciada no se muestra nada. La
+# puerta está acá y no en la web del estudio porque esto corre en otro servidor (ver
+# acceso.py).
+acceso.requiere_acceso()
+
+col_quien, col_salir = st.columns([6, 1])
+with col_quien:
+    st.caption(f"Sesión iniciada como **{acceso.nombre_de_quien_entro()}**")
+with col_salir:
+    acceso.boton_salir()
+
 tab1, tab2 = st.tabs(["💰 Juicio por Capital + Intereses", "📈 Juicio a los Intereses"])
 
 with tab1:
