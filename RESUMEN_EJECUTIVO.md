@@ -59,10 +59,7 @@ Archivos que acompañan a `app.py`:
 ```
 tasas.json                        # las tasas. UNICO lugar donde se actualizan (punto 7)
 actualizar_tasas.py               # compara tasas.json contra la página de ARCA
-acceso.py                         # puerta de acceso del estudio (punto 8)
-generar_clave.py                  # genera las credenciales para pegar en los secrets
 test_motor.py                     # regresión contra las liquidaciones reales de ARCA
-test_acceso.py                    # regresión de la puerta de acceso
 .github/workflows/control-tasas.yml   # corre el control una vez por semana
 ```
 
@@ -197,39 +194,24 @@ a ARCA un detalle de cálculo que atraviese ese tramo y copiar el número.
 
 ## 8. Acceso
 
-La app es de **uso interno del estudio**: sin sesión iniciada no muestra nada
-(`acceso.py`, llamado desde `app.py` antes de dibujar las lengüetas).
+La app es de **uso interno del estudio** y no la controla el código: está marcada como
+**privada en Streamlit Community Cloud**, que pide login con cuenta de Google antes de
+servir nada. Quien no esté invitado no llega ni a ejecutar `app.py`.
+
+- **Para dar de alta o de baja a alguien**: en Streamlit Cloud, en la app →
+  Settings → Sharing.
+- La app se entra por `https://liquidador-pochelu.streamlit.app`, enlazada desde el
+  Área del Estudio de la web (`estudiopochelu.com/estudio`).
 
 La puerta está en la app y **no** en la web del estudio, a propósito: la app corre en
 otro servidor, así que quien tenga la URL entra haya pasado o no por la web. Un link
 escondido detrás de una pantalla de acceso no es control de acceso.
 
-- Las credenciales **no están en el repositorio**: viven en los secrets de Streamlit.
-- De la contraseña solo se guarda un hash con **scrypt** (con sal propia por usuario),
-  del que no se puede volver a la contraseña.
-- La comparación usa `hmac.compare_digest`, y un usuario inexistente tarda lo mismo que
-  uno real para que no se pueda averiguar quién tiene cuenta.
-- A los 5 intentos fallidos bloquea 5 minutos. Es un freno, no una barrera: el bloqueo
-  vive en la sesión y se puede evitar abriendo otra. Lo que realmente frena la fuerza
-  bruta es el costo de scrypt más una contraseña larga.
-
-**Para dar de alta un usuario**: correr `python generar_clave.py`, que pide usuario y
-contraseña e imprime el bloque a pegar en Streamlit Cloud → Settings → Secrets. La
-contraseña no queda escrita en ningún archivo. Formato:
-
-```toml
-[usuarios.agustin]
-nombre = "Agustín"
-sal = "..."
-hash = "..."
-```
-
-**Para dar de baja**: borrar el bloque de los secrets.
-
-⚠️ Si no hay ningún usuario cargado, la app no arranca y muestra un error. Es a
-propósito: es preferible que no funcione a que quede abierta.
-
-`test_acceso.py` fija todo esto como regresión (`python test_acceso.py`).
+⚠️ **Si alguna vez se pasa la app a pública, o se muda a un hosting sin login propio,
+queda abierta a cualquiera con la URL.** Hubo una puerta propia dentro de la app
+(`acceso.py`: usuario y contraseña, con hash scrypt y sal por usuario, más
+`generar_clave.py` y `test_acceso.py`). Se sacó para no encadenar dos logins, ya que
+Streamlit ya pedía uno. Está en el historial de git: si se muda la app, se recupera.
 
 ## 9. Deployment
 
