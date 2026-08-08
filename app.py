@@ -10,20 +10,195 @@ from openpyxl.comments import Comment
 from openpyxl.utils import get_column_letter
 
 # --- CONFIGURACIÓN DE LA PÁGINA ---
-st.set_page_config(page_title="Liquidador ARCA - Judicial", page_icon="⚖️", layout="wide")
+st.set_page_config(page_title="Liquidador ARCA — Estudio Pochelú", page_icon="⚖️", layout="wide")
 
-# --- DISEÑO: ESTILOS DE AZULES SOBRIOS ---
+# =====================================================================================
+# IDENTIDAD VISUAL
+#
+# Mismos tokens que la landing del estudio (estudiopochelu.com): verde profundo y
+# dorado, Inter para el texto y Source Serif 4 para los títulos, botones tipo píldora
+# y fondo crema. Si allá cambia un color, acá hay que cambiarlo también.
+# =====================================================================================
 st.markdown("""
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600;8..60,700&display=swap" rel="stylesheet">
 <style>
-    .stApp { background-color: #F0F4F8; }
-    h1, h2, h3 { color: #102A43 !important; }
-    [data-testid="stMetricValue"] { color: #1E3A8A; font-weight: bold; }
-    .stDownloadButton button { background-color: #2C3E50; color: white; border: none; border-radius: 5px; }
-    .stDownloadButton button:hover { background-color: #1A252F; color: white; }
+:root {
+  --green-900: #082622;
+  --green-800: #0E3B34;
+  --green-700: #145046;
+  --green-600: #1B6B5C;
+  --green-500: #2C8A76;
+  --gold: #C9A227;
+  --gold-soft: #D9BC6A;
+  --ink: #0C1A17;
+  --body: #445350;
+  --muted: #6B7B77;
+  --line: #E1E4DF;
+  --cream: #F6F5F0;
+  --white: #FFFFFF;
+  --radius: 14px;
+  --radius-lg: 22px;
+  --shadow-sm: 0 1px 2px rgba(8,38,34,.06), 0 4px 12px rgba(8,38,34,.05);
+  --shadow-md: 0 2px 6px rgba(8,38,34,.07), 0 18px 40px rgba(8,38,34,.09);
+  --sans: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --serif: 'Source Serif 4', Georgia, 'Times New Roman', serif;
+}
+.stApp { background: var(--cream); }
+html, body, [class*="css"], .stApp, [data-testid="stMarkdownContainer"] {
+  font-family: var(--sans);
+  color: var(--body);
+}
+[data-testid="stHeader"] { background: transparent; }
+.block-container { padding-top: 2.2rem; max-width: 1240px; }
+h1, h2, h3, h4 {
+  font-family: var(--serif) !important;
+  color: var(--ink) !important;
+  letter-spacing: -.015em;
+  font-weight: 600 !important;
+}
+[data-testid="stMarkdownContainer"] strong { color: var(--ink); font-weight: 600; }
+/* ── Encabezado de marca ───────────────────── */
+.lq-header {
+  display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;
+  padding: 1.5rem 1.9rem;
+  border-radius: var(--radius-lg);
+  background:
+    radial-gradient(760px 340px at 88% 6%, rgba(44,138,118,.24), transparent 62%),
+    linear-gradient(165deg, var(--green-900) 0%, var(--green-800) 58%, #0A322C 100%);
+  box-shadow: var(--shadow-md);
+  margin-bottom: 1.7rem;
+}
+.lq-mark {
+  display: grid; place-items: center; flex: 0 0 auto;
+  width: 46px; height: 46px; border-radius: 13px;
+  background: rgba(217,188,106,.16); color: var(--gold-soft); font-size: 1.35rem;
+}
+.lq-titles { display: flex; flex-direction: column; line-height: 1.2; }
+.lq-titles strong {
+  font-family: var(--serif); font-size: 1.45rem; font-weight: 700;
+  color: #fff; letter-spacing: -.015em;
+}
+.lq-titles small {
+  font-size: .72rem; letter-spacing: .16em; text-transform: uppercase;
+  color: rgba(255,255,255,.58); margin-top: .18rem;
+}
+.lq-eyebrow {
+  margin-left: auto; display: inline-flex; align-items: center; gap: .55rem;
+  font-size: .74rem; font-weight: 600; letter-spacing: .13em; text-transform: uppercase;
+  color: var(--gold-soft);
+}
+.lq-eyebrow .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--gold); }
+/* ── Lengüetas ─────────────────────────────── */
+.stTabs [data-baseweb="tab-list"] { gap: .4rem; border-bottom: 1px solid var(--line); }
+.stTabs [data-baseweb="tab"] {
+  font-family: var(--sans); font-size: .96rem; font-weight: 600;
+  color: var(--muted); padding: .55rem 1.15rem; border-radius: 12px 12px 0 0;
+}
+.stTabs [data-baseweb="tab"]:hover { color: var(--green-700); background: rgba(27,107,92,.06); }
+.stTabs [aria-selected="true"] { color: var(--green-800) !important; }
+.stTabs [data-baseweb="tab-highlight"] { background: var(--green-600); height: 3px; }
+/* ── Métricas ──────────────────────────────── */
+[data-testid="stMetric"] {
+  background: var(--white); border: 1px solid var(--line); border-left: 4px solid var(--gold);
+  border-radius: var(--radius); padding: 1.05rem 1.25rem; box-shadow: var(--shadow-sm);
+  transition: transform .25s ease, box-shadow .25s ease;
+}
+[data-testid="stMetric"]:hover { transform: translateY(-3px); box-shadow: var(--shadow-md); }
+[data-testid="stMetricLabel"] p {
+  font-size: .74rem !important; font-weight: 600; letter-spacing: .1em;
+  text-transform: uppercase; color: var(--muted) !important;
+}
+[data-testid="stMetricValue"] {
+  font-family: var(--serif); font-size: 1.6rem !important;
+  color: var(--green-800) !important; font-weight: 600;
+}
+/* ── Botones ───────────────────────────────── */
+.stButton button, .stDownloadButton button, [data-testid="stBaseButton-secondary"] {
+  font-family: var(--sans); font-weight: 600; font-size: .95rem;
+  border-radius: 999px !important; padding: .75rem 1.5rem;
+  border: 1.5px solid transparent !important;
+  transition: transform .18s ease, background-color .18s ease, box-shadow .18s ease;
+}
+.stButton button:hover, .stDownloadButton button:hover { transform: translateY(-2px); }
+.stDownloadButton button {
+  background: var(--green-800) !important; color: #fff !important;
+  box-shadow: var(--shadow-sm);
+}
+.stDownloadButton button:hover { background: var(--green-700) !important; box-shadow: var(--shadow-md); }
+.stDownloadButton button p { color: #fff !important; font-weight: 600; }
+/* La plantilla en blanco es la acción secundaria: dorada, no verde. */
+.st-key-lq-plantilla-capital .stDownloadButton button,
+.st-key-lq-plantilla-intereses .stDownloadButton button {
+  background: var(--gold-soft) !important; box-shadow: none;
+}
+.st-key-lq-plantilla-capital .stDownloadButton button:hover,
+.st-key-lq-plantilla-intereses .stDownloadButton button:hover { background: #E6CE86 !important; }
+.st-key-lq-plantilla-capital .stDownloadButton button p,
+.st-key-lq-plantilla-intereses .stDownloadButton button p { color: var(--green-900) !important; }
+/* ── Carga de archivo ──────────────────────── */
+[data-testid="stFileUploaderDropzone"] {
+  background: var(--white); border: 1.5px dashed #C6D1CD; border-radius: var(--radius);
+  padding: 1.4rem;
+}
+[data-testid="stFileUploaderDropzone"]:hover { border-color: var(--green-500); background: rgba(27,107,92,.03); }
+[data-testid="stFileUploaderDropzone"] button {
+  border-radius: 999px !important; border: 1.5px solid rgba(12,26,23,.22) !important;
+  background: transparent !important; color: var(--ink) !important; font-weight: 600;
+}
+[data-testid="stFileUploaderDropzone"] button:hover {
+  border-color: var(--green-700) !important; color: var(--green-800) !important;
+  background: rgba(27,107,92,.06) !important;
+}
+/* ── Avisos ────────────────────────────────── */
+/* El fondo lo pinta stAlertContainer, no stAlert: el tipo de aviso se detecta con
+   :has() sobre el testid del contenido, que es donde Streamlit lo marca. */
+[data-testid="stAlert"] { border: 0; box-shadow: none; padding: 0; }
+[data-testid="stAlertContainer"] {
+  border-radius: var(--radius) !important; border: 1px solid var(--line);
+  border-left: 4px solid var(--green-500); box-shadow: var(--shadow-sm);
+  color: var(--body);
+}
+[data-testid="stAlertContainer"]:has([data-testid="stAlertContentSuccess"]) {
+  background: rgba(44,138,118,.10) !important; border-left-color: var(--green-600);
+}
+[data-testid="stAlertContainer"]:has([data-testid="stAlertContentInfo"]) {
+  background: rgba(20,80,70,.07) !important; border-left-color: var(--green-500);
+}
+[data-testid="stAlertContainer"]:has([data-testid="stAlertContentWarning"]) {
+  background: rgba(201,162,39,.12) !important; border-left-color: var(--gold);
+}
+[data-testid="stAlertContainer"]:has([data-testid="stAlertContentError"]) {
+  background: rgba(180,35,24,.08) !important; border-left-color: #B42318;
+}
+/* ── Tablas y desplegables ─────────────────── */
+[data-testid="stExpander"] {
+  background: var(--white); border: 1px solid var(--line);
+  border-radius: var(--radius-lg); box-shadow: var(--shadow-sm); overflow: hidden;
+}
+[data-testid="stExpander"] summary { font-weight: 600; color: var(--ink); }
+[data-testid="stExpander"] summary:hover { color: var(--green-700); }
+[data-testid="stDataFrame"] {
+  border: 1px solid var(--line); border-radius: var(--radius);
+  overflow: hidden; box-shadow: var(--shadow-sm); background: var(--white);
+}
+hr, [data-testid="stDivider"] hr { border-color: var(--line); }
+[data-testid="stCaptionContainer"] p { color: var(--muted); font-size: .87rem; }
+:focus-visible { outline: 3px solid var(--green-500); outline-offset: 3px; border-radius: 6px; }
 </style>
 """, unsafe_allow_html=True)
 
-st.title("⚖️ Liquidador ARCA - Ejecución Fiscal")
+st.markdown("""
+<div class="lq-header">
+  <span class="lq-mark">⚖</span>
+  <span class="lq-titles">
+    <strong>Liquidador ARCA</strong>
+    <small>Ejecución fiscal</small>
+  </span>
+  <span class="lq-eyebrow"><span class="dot"></span>Estudio Pochelú</span>
+</div>
+""", unsafe_allow_html=True)
 
 def formato_arg(numero):
     return f"${numero:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
@@ -745,13 +920,16 @@ tab1, tab2 = st.tabs(["💰 Juicio por Capital + Intereses", "📈 Juicio a los 
 
 with tab1:
     st.markdown("Subí el Excel con la hoja **Deudas** (formato con Capital impositivo). Las tasas ya están en la app.")
-    st.download_button(
-        label="📄 Descargar plantilla en blanco",
-        data=generar_plantilla_capital(),
-        file_name="Plantilla_Juicio_Capital_Intereses.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        key="plantilla_capital"
-    )
+    # El key del contenedor genera la clase .st-key-<key>, que es lo que engancha el CSS
+    # para pintar de dorado el botón secundario (un div suelto no envolvería al widget).
+    with st.container(key="lq-plantilla-capital"):
+        st.download_button(
+            label="📄 Descargar plantilla en blanco",
+            data=generar_plantilla_capital(),
+            file_name="Plantilla_Juicio_Capital_Intereses.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            key="plantilla_capital"
+        )
     archivo_1 = st.file_uploader("Arrastrá tu Excel aquí", type=["xlsx"], key="uploader_capital")
     if archivo_1 is not None:
         try:
@@ -762,13 +940,14 @@ with tab1:
 
 with tab2:
     st.markdown("Subí el Excel con la hoja **Deudas** (formato donde 'Capital' es el monto de intereses adeudados; el capital impositivo original ya está pago). Las tasas ya están en la app.")
-    st.download_button(
-        label="📄 Descargar plantilla en blanco",
-        data=generar_plantilla_intereses(),
-        file_name="Plantilla_Juicio_Intereses.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        key="plantilla_intereses"
-    )
+    with st.container(key="lq-plantilla-intereses"):
+        st.download_button(
+            label="📄 Descargar plantilla en blanco",
+            data=generar_plantilla_intereses(),
+            file_name="Plantilla_Juicio_Intereses.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            key="plantilla_intereses"
+        )
     archivo_2 = st.file_uploader("Arrastrá tu Excel aquí", type=["xlsx"], key="uploader_intereses")
     if archivo_2 is not None:
         try:
