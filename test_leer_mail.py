@@ -166,7 +166,46 @@ b3 = leer_mail.leer_boleta(armar_mail(), remitentes_habilitados=["abogado@arca.g
 check("sin aviso si el remitente está en la lista", len(b3['avisos']), 0)
 
 # =====================================================================================
-print("\n6) Mails que no se pueden leer")
+print("\n6) Constancias de honorarios: el juicio está cerrado")
+# Cuando llega una de estas, el capital y los intereses ya están cancelados y lo
+# único que resta son los honorarios. No hay nada que liquidar.
+#
+# Los dos formatos son reales: según el programa de correo del agente fiscal, el
+# HTML llega en una sola línea o cortado. Cortado, "BOLETA DE DEUDA" queda partido
+# en dos y no se puede comparar contra la celda cruda.
+HONORARIOS = """<html><body>
+<p>CONSTANCIA DE GENERACI&Oacute;N DE BOLETA ELECTR&Oacute;NICA DE PAGO DE HONORARIOS</p>
+<table><tbody>
+  <tr><td>EMPRESA DE<br>PRUEBA S.A.</td><td>CUIT: <strong>30999999995</strong></td></tr>
+  <tr><td>BOLETA{corte}DE DEUDA N&ordm;: <strong>434/563212/2026</strong></td>
+      <td>TOTAL{corte}HONORARIOS</td><td>$507.470,26</td></tr>
+  <tr><td>DISTRITO PUERTO MADRYN</td></tr>
+  <tr><td>TOTAL</td><td>AGENTE FISCAL: $ <strong>507.470,26</strong></td>
+      <td>ABOGADO: $ <strong>0,00</strong></td></tr>
+</tbody></table>
+</body></html>"""
+
+for etiqueta, corte in (("en una sola línea", " "), ("cortado en varias líneas", "\n            ")):
+    c = leer_mail.leer_honorarios(HONORARIOS.format(corte=corte))
+    check(f"la reconoce ({etiqueta})", len(c), 1)
+    if c:
+        check("  juicio", c[0]['juicio'], "434/563212/2026")
+        check("  contribuyente", c[0]['contribuyente'], "EMPRESA DE PRUEBA S.A.")
+        check("  honorarios", c[0]['honorarios'], 507470.26)
+
+# Un mismo mail puede liquidar los honorarios de más de un contribuyente.
+doble = HONORARIOS.format(corte=" ") + HONORARIOS.format(corte=" ").replace(
+    "434/563212/2026", "434/563403/2026")
+check("lee las dos constancias de un mail doble", len(leer_mail.leer_honorarios(doble)), 2)
+
+# Y una boleta de deuda no se confunde con una constancia de honorarios.
+check("una boleta de deuda no es una constancia", len(leer_mail.leer_honorarios(HTML)), 0)
+
+# El número de juicio de la boleta tiene que poder cruzarse con el de la constancia.
+check("el juicio de la boleta queda comparable", b['juicio_id'], "434/111111/2026")
+
+# =====================================================================================
+print("\n7) Mails que no se pueden leer")
 for descripcion, datos in (
     ("un mail sin la tabla de deuda", armar_mail("<html><body><p>Hola, te llamo luego.</p></body></html>")),
 ):

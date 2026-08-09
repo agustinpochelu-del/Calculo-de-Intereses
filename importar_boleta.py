@@ -18,6 +18,7 @@ Códigos de salida:
     0  se leyó bien y la suma coincide con el monto de demanda
     1  se leyó, pero hay algo para mirar (la suma no cierra, o hay filas sin clasificar)
     2  no es una boleta de deuda, o no se pudo leer
+    3  es una constancia de honorarios: el juicio está cerrado, no hay nada que liquidar
 """
 import argparse
 import datetime
@@ -129,9 +130,30 @@ def main():
         r = procesar(args.archivo, args.salida, args.remitente, args.asunto,
                      habilitados, liquidacion)
     except ValueError as e:
-        # No es una boleta de deuda: es el caso normal cuando el agente fiscal
-        # manda otra cosa (honorarios, una consulta suelta). No es un error.
-        salida = {'boleta': False, 'motivo': str(e)}
+        # Antes de darlo por perdido: puede ser una constancia de honorarios, que
+        # no es una falla sino la señal de que el juicio se cerró.
+        with open(args.archivo, 'rb') as f:
+            crudo = f.read()
+        if args.archivo.lower().endswith('.eml'):
+            constancias = leer_mail.leer_honorarios(crudo)
+        else:
+            constancias = leer_mail.leer_honorarios(crudo.decode('utf-8', 'replace'))
+
+        if constancias:
+            if args.json:
+                print(json.dumps({'boleta': False, 'honorarios': constancias},
+                                 ensure_ascii=False, indent=2))
+            else:
+                print("Constancia de honorarios: el juicio ya está cancelado en capital "
+                      "e intereses.")
+                for c in constancias:
+                    monto = f"{c['honorarios']:,.2f}" if c['honorarios'] is not None else "?"
+                    print(f"  {c['contribuyente']} — juicio {c['juicio']} — honorarios {monto}")
+                print("  No hay planilla que armar. Cerrá la cadena.")
+            return 3
+
+        # Ni boleta ni honorarios: el caso normal de una consulta suelta.
+        salida = {'boleta': False, 'honorarios': [], 'motivo': str(e)}
         print(json.dumps(salida, ensure_ascii=False) if args.json else f"No es una boleta: {e}")
         return 2
 

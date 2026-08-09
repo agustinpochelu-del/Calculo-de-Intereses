@@ -355,6 +355,78 @@ def _leer_pagos(tabla):
     return pagos
 
 
+_RE_JUICIO = re.compile(r'(\d+)\s*/\s*(\d+)\s*/\s*(\d{4})')
+
+
+def normalizar_juicio(texto):
+    """Deja el número de juicio en una forma comparable: '434/563212/2026'.
+
+    Hace falta porque el mismo juicio se escribe distinto según de dónde salga:
+    la boleta de deuda dice 'Nro. Juicio : 434 / 620902 / 2026' y la constancia
+    de honorarios dice 'BOLETA DE DEUDA Nº: 434/620902/2026'.
+    """
+    m = _RE_JUICIO.search(texto or '')
+    return f"{m.group(1)}/{m.group(2)}/{m.group(3)}" if m else ''
+
+
+def leer_honorarios(datos):
+    """Lee una constancia de generación de boleta de honorarios.
+
+    Estas constancias llegan cuando el juicio ya está cancelado en capital e
+    intereses: lo único que queda por pagar son los honorarios. O sea que la
+    aparición de una es la señal de que ese juicio está cerrado y no hay más
+    liquidaciones que hacer sobre él.
+
+    Un mismo mail puede traer varias constancias, una por contribuyente.
+
+    Devuelve una lista; vacía si el mail no es una constancia de honorarios.
+    """
+    if isinstance(datos, bytes) or (isinstance(datos, str) and datos.lstrip().startswith('From:')):
+        try:
+            tablas, _, _ = _tablas_del_mail(datos)
+        except ValueError:
+            return []
+    else:
+        tablas = _tablas_del_html(datos)
+
+    constancias = []
+    for tabla in tablas:
+        plano = _comprimir(' '.join(c for fila in tabla for c in fila))
+        if 'total honorarios' not in plano or 'boleta de deuda' not in plano:
+            continue
+
+        contribuyente = cuit = juicio = ''
+        total = None
+        for fila in tabla:
+            for i, celda in enumerate(fila):
+                # Sobre el texto normalizado, no sobre la celda cruda: según el
+                # programa de correo del agente fiscal, "BOLETA DE DEUDA" puede
+                # llegar partido en dos líneas.
+                plano_celda = _comprimir(celda)
+                if 'cuit' in plano_celda and not cuit:
+                    solo = re.sub(r'\D', '', plano_celda)
+                    if len(solo) >= 11:
+                        cuit = solo[:11]
+                        # El contribuyente es la celda anterior de la misma fila.
+                        if i > 0:
+                            contribuyente = re.sub(r'\s+', ' ', fila[i - 1]).strip()
+                if 'boleta de deuda' in plano_celda and not juicio:
+                    juicio = normalizar_juicio(celda)
+            # "TOTAL HONORARIOS" y el importe van en celdas separadas de la misma fila.
+            for i, celda in enumerate(fila[:-1]):
+                if 'total honorarios' in _comprimir(celda) and total is None:
+                    total = _importe(fila[i + 1].lstrip('$ '))
+
+        if juicio:
+            constancias.append({
+                'contribuyente': contribuyente,
+                'cuit': cuit,
+                'juicio': juicio,
+                'honorarios': total,
+            })
+    return constancias
+
+
 def _buscar_dato(tablas, etiqueta):
     """Busca un valor de las fichas 'Etiqueta : valor' que trae la boleta."""
     objetivo = _comprimir(etiqueta)
@@ -463,6 +535,8 @@ def _armar_boleta(tablas, remitente, asunto, remitentes_habilitados=()):
         'contribuyente': _buscar_dato(tablas, 'Contribuyente'),
         'cuit': re.sub(r'\D', '', _buscar_dato(tablas, 'C.U.I.T.').split('-')[0])[:11],
         'juicio': _buscar_dato(tablas, 'Nro. Juicio'),
+        # Misma forma que devuelve leer_honorarios(), para poder cruzarlos.
+        'juicio_id': normalizar_juicio(_buscar_dato(tablas, 'Nro. Juicio')),
         'expediente': _buscar_dato(tablas, 'Expediente'),
         'juzgado': _buscar_dato(tablas, 'Juzgado'),
         'monto_demanda': _importe(_buscar_dato(tablas, 'Monto Demanda')),

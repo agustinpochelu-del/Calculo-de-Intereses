@@ -9,3 +9,7 @@ __pycache__/
 *.eml
 *.msg
 *.xlsx
+importados/
+
+# Bitacora privada: nombra clientes y juicios reales.
+Memoria.md
