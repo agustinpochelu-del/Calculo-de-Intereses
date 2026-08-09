@@ -2,3 +2,10 @@
 .streamlit/secrets.toml
 __pycache__/
 *.pyc
+
+# Mails de boletas de deuda y planillas de clientes: el repositorio es PUBLICO y
+# estos archivos llevan CUIT, domicilio y deuda de contribuyentes reales.
+# Los tests usan mails inventados (ver test_leer_mail.py).
+*.eml
+*.msg
+*.xlsx

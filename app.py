@@ -9,6 +9,8 @@ from openpyxl.styles import Font, PatternFill, Alignment
 from openpyxl.comments import Comment
 from openpyxl.utils import get_column_letter
 
+import leer_mail
+
 # --- CONFIGURACIÓN DE LA PÁGINA ---
 st.set_page_config(page_title="Liquidador ARCA — Estudio Pochelú", page_icon="⚖️", layout="wide")
 
@@ -914,6 +916,186 @@ def generar_plantilla_intereses():
 
 
 # =====================================================================================
+# IMPORTACIÓN DESDE EL MAIL DEL AGENTE FISCAL
+# =====================================================================================
+# El mail no se liquida directo: se convierte en planilla, y la planilla se sube a la
+# pestaña que corresponda. Suena a paso de más y es a propósito. Así la importación
+# usa el mismo camino de cálculo que ya está probado contra ARCA, y queda una planilla
+# en el medio que se puede abrir, revisar y guardar en el expediente.
+
+COLUMNAS_CAPITAL = ['Impuesto', 'concepto', 'Periodo', 'Vencimiento', 'Capital',
+                    'F. Pago Capital', 'fecha_Demanda', 'Fecha_Liquidacion']
+COLUMNAS_INTERESES = ['Impuesto', 'concepto', 'Periodo', 'Vencimiento', 'Capital',
+                      'fecha_Demanda', 'Fecha_Liquidacion']
+
+
+def armar_planilla(df, columnas):
+    """Arma un Excel con la hoja 'Deudas', igual al que produce la plantilla."""
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Deudas"
+    _estilo_header(ws, 1, columnas)
+
+    for i, (_, fila) in enumerate(df.iterrows(), start=2):
+        for j, col in enumerate(columnas, start=1):
+            celda = ws.cell(row=i, column=j, value=fila.get(col))
+            if col == 'Capital':
+                celda.number_format = '#,##0.00'
+            elif 'echa' in col or col == 'Vencimiento':
+                celda.number_format = 'DD/MM/YYYY'
+
+    _ajustar_anchos(ws, [26, 24, 12, 14, 16, 14, 14, 16][:len(columnas)])
+    ws.freeze_panes = "A2"
+    buffer = BytesIO()
+    wb.save(buffer)
+    return buffer.getvalue()
+
+
+def _a_fecha(texto):
+    """De 'AAAA-MM-DD' a date. None si viene vacío."""
+    return datetime.date.fromisoformat(texto) if texto else None
+
+
+def agentes_fiscales():
+    """Las direcciones de los agentes fiscales que mandan las boletas.
+
+    NO van en el código: el repositorio es público y son direcciones personales de
+    gente con nombre y apellido. Se cargan en Streamlit Community Cloud, en
+    Settings → Secrets, con esta forma:
+
+        agentes_fiscales = "una@ejemplo.com, otra@ejemplo.com"
+
+    Si no están cargadas, la app funciona igual pero no controla el remitente.
+    """
+    try:
+        crudo = st.secrets.get("agentes_fiscales", "")
+    except Exception:
+        # Sin archivo de secrets configurado, st.secrets protesta. No es un error:
+        # simplemente no hay lista.
+        crudo = ""
+    return [d.strip().lower() for d in str(crudo).split(",") if d.strip()]
+
+
+def procesar_mail(archivo_subido):
+    habilitados = agentes_fiscales()
+    boleta = leer_mail.leer_boleta(archivo_subido.getvalue(), habilitados)
+
+    # --- Lo que dice la carátula de la boleta ---
+    st.markdown("#### Boleta de deuda")
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Contribuyente", boleta['contribuyente'] or "—")
+    c2.metric("CUIT", boleta['cuit'] or "—")
+    c3.metric("Juicio", boleta['juicio'] or "—")
+
+    for aviso in boleta['avisos']:
+        st.warning(aviso)
+
+    if not habilitados:
+        st.caption(
+            "⚠️ No hay cargada una lista de agentes fiscales, así que no controlé de quién "
+            "vino el mail. Se carga en Settings → Secrets, con la clave `agentes_fiscales`."
+        )
+    elif boleta['remitente'] in habilitados:
+        st.caption(f"Remitente reconocido: {boleta['remitente']}")
+
+    df = pd.DataFrame(boleta['filas'])
+
+    # --- Control automático: la suma de las filas contra el monto de demanda ---
+    # Si estos dos números no coinciden, alguna fila se leyó mal o quedó afuera.
+    # Es el mejor control que da el mail, porque el propio mail trae los dos.
+    suma = round(df['Capital'].sum(), 2)
+    declarado = boleta['monto_demanda']
+    if declarado is None:
+        st.info(f"Leí **{len(df)} filas** por **{formato_arg(suma)}**. "
+                "La boleta no trae monto de demanda, así que no pude contrastarlo.")
+    elif abs(suma - declarado) < 0.01:
+        st.success(f"Leí **{len(df)} filas** por **{formato_arg(suma)}**, "
+                   "que es exactamente el monto de demanda de la boleta.")
+    else:
+        st.error(
+            f"**Las filas no suman el monto de demanda.** Leí {len(df)} filas por "
+            f"{formato_arg(suma)} y la boleta declara {formato_arg(declarado)} "
+            f"(diferencia: {formato_arg(round(declarado - suma, 2))}). "
+            "Algo se leyó mal o quedó afuera: revisá el mail antes de usar esto."
+        )
+
+    # --- Las dos fechas que no salen del mail ---
+    st.markdown("#### Fechas de la liquidación")
+    c1, c2 = st.columns(2)
+    fecha_demanda = c1.date_input(
+        "Fecha de demanda", value=_a_fecha(boleta['fecha_demanda']) or datetime.date.today(),
+        format="DD/MM/YYYY", key="mail_demanda",
+        help="Viene de la fecha de sorteo de la boleta. Cambiala si corresponde otra.")
+    fecha_liquidacion = c2.date_input(
+        "Fecha de liquidación", value=datetime.date.today(), format="DD/MM/YYYY",
+        key="mail_liquidacion", help="Hasta qué día se calculan los intereses. La elegís vos.")
+
+    # --- Revisión fila por fila ---
+    st.markdown("#### Revisá lo que leí")
+    st.caption(
+        "La columna **Destino** es una propuesta, armada según el subconcepto de ARCA: "
+        "los saldos de declaración jurada y los anticipos son capital impositivo, y los "
+        "intereses resarcitorios ya son interés. Corregila donde haga falta: las filas "
+        "en «revisar» no entran en ninguna planilla hasta que las clasifiques."
+    )
+
+    df['Vencimiento'] = pd.to_datetime(df['Vencimiento'], errors='coerce')
+    df['F. Pago Capital'] = pd.to_datetime(df['F. Pago Capital'], errors='coerce')
+
+    editado = st.data_editor(
+        df[['Destino', 'Impuesto', 'concepto', 'Periodo', 'Vencimiento', 'Capital',
+            'F. Pago Capital', 'Nota', 'Aviso']],
+        use_container_width=True, hide_index=True, num_rows="dynamic", key="mail_editor",
+        column_config={
+            'Destino': st.column_config.SelectboxColumn(
+                "Destino", width="small", required=True,
+                options=[leer_mail.CAPITAL, leer_mail.INTERESES, leer_mail.REVISAR],
+                help="capital = se deben capital e intereses · intereses = el capital "
+                     "está cancelado y se deben los intereses · revisar = no va a ninguna planilla"),
+            'Vencimiento': st.column_config.DateColumn("Vencimiento", format="DD/MM/YYYY"),
+            'F. Pago Capital': st.column_config.DateColumn("F. Pago Capital", format="DD/MM/YYYY"),
+            'Capital': st.column_config.NumberColumn("Capital", format="%.2f"),
+            'Nota': st.column_config.TextColumn("Nota del agente fiscal", width="medium", disabled=True),
+            'Aviso': st.column_config.TextColumn("Por qué la marqué", width="medium", disabled=True),
+        })
+
+    pendientes = int((editado['Destino'] == leer_mail.REVISAR).sum())
+    if pendientes:
+        st.warning(f"{'Queda' if pendientes == 1 else 'Quedan'} **{pendientes} "
+                   f"{'fila' if pendientes == 1 else 'filas'}** sin clasificar. "
+                   "No van a salir en las planillas.")
+
+    # --- Las planillas ---
+    st.markdown("#### Bajá las planillas")
+    listo = editado.copy()
+    listo['fecha_Demanda'] = pd.Timestamp(fecha_demanda)
+    listo['Fecha_Liquidacion'] = pd.Timestamp(fecha_liquidacion)
+
+    base = (boleta['contribuyente'] or 'boleta').title().replace(' ', '_')[:40]
+    c1, c2 = st.columns(2)
+
+    for col, destino, columnas, etiqueta, archivo in (
+        (c1, leer_mail.CAPITAL, COLUMNAS_CAPITAL, "Capital + Intereses", "Capital"),
+        (c2, leer_mail.INTERESES, COLUMNAS_INTERESES, "Juicio a los Intereses", "Intereses"),
+    ):
+        parte = listo[listo['Destino'] == destino]
+        with col:
+            if parte.empty:
+                st.caption(f"Sin filas para **{etiqueta}**.")
+                continue
+            st.download_button(
+                f"⬇️ {etiqueta} ({len(parte)} "
+                f"{'fila' if len(parte) == 1 else 'filas'} · "
+                f"{formato_arg(round(parte['Capital'].sum(), 2))})",
+                data=armar_planilla(parte, columnas),
+                file_name=f"{base}_{archivo}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key=f"bajar_{archivo}")
+
+    st.caption("Después subí cada planilla en la pestaña que le corresponde, acá al lado.")
+
+
+# =====================================================================================
 # INTERFAZ
 # =====================================================================================
 # El acceso NO se controla acá: la app está marcada como privada en Streamlit
@@ -924,7 +1106,22 @@ def generar_plantilla_intereses():
 # queda abierta a cualquiera con la URL. Hubo una puerta propia (acceso.py, con usuario
 # y contraseña) que se sacó para no encadenar dos logins: está en el historial de git
 # por si hace falta recuperarla.
-tab1, tab2 = st.tabs(["💰 Juicio por Capital + Intereses", "📈 Juicio a los Intereses"])
+tab0, tab1, tab2 = st.tabs(["📧 Importar desde el mail", "💰 Juicio por Capital + Intereses",
+                            "📈 Juicio a los Intereses"])
+
+with tab0:
+    st.markdown(
+        "Subí el mail del agente fiscal con la **boleta de deuda** y armo las planillas. "
+        "Guardá el mail como archivo `.eml` (en Gmail: **⋮ → Descargar mensaje**) y arrastralo acá."
+    )
+    archivo_0 = st.file_uploader("Arrastrá el mail acá", type=["eml"], key="uploader_mail")
+    if archivo_0 is not None:
+        try:
+            procesar_mail(archivo_0)
+        except ValueError as e:
+            st.error(str(e))
+        except Exception as e:
+            st.error(f"No pude leer el mail: {e}")
 
 with tab1:
     st.markdown("Subí el Excel con la hoja **Deudas** (formato con Capital impositivo). Las tasas ya están en la app.")

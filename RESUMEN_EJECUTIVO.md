@@ -11,17 +11,37 @@ tiene que dar **el mismo importe al centavo** que el detalle de cálculo que emi
 
 ## 2. Estado actual
 
-La app tiene **dos lengüetas independientes** (`st.tabs`), cada una con su propio uploader de Excel
-y su propio motor de procesamiento, porque parten de datos de origen distinto:
+La app tiene **tres lengüetas** (`st.tabs`). Las dos de liquidación son independientes entre sí,
+cada una con su propio uploader de Excel y su propio motor, porque parten de datos de origen
+distinto. La primera no liquida: prepara.
 
 | Lengüeta | Función principal | Cuándo se usa |
 |---|---|---|
+| 📧 Importar desde el mail | `procesar_mail()` | Llega el mail del agente fiscal con la boleta de deuda y hay que pasarlo a planilla |
 | 💰 Juicio por Capital + Intereses | `procesar_juicio_capital()` | El capital impositivo original está impago (o se pagó en algún momento del juicio) |
 | 📈 Juicio a los Intereses | `procesar_juicio_intereses()` | El capital YA fue pagado; se demanda por los intereses resarcitorios impagos, que pasan a ser la nueva "base" de la deuda |
 
-Cada lengüeta tiene, además, un botón para **descargar una plantilla Excel en blanco** con el
-formato exacto esperado (`generar_plantilla_capital()` / `generar_plantilla_intereses()`), con
-instrucciones, fila de ejemplo y las tasas vigentes precargadas.
+Las dos de liquidación tienen, además, un botón para **descargar una plantilla Excel en blanco**
+con el formato exacto esperado (`generar_plantilla_capital()` / `generar_plantilla_intereses()`),
+con instrucciones, fila de ejemplo y las tasas vigentes precargadas.
+
+### El circuito completo
+
+```
+mail del agente fiscal (.eml)
+        │
+        ▼  lengüeta 📧 — leer_mail.py
+   tabla revisable  ──► control: la suma de las filas contra el "Monto Demanda" de la boleta
+        │
+        ▼  se bajan una o dos planillas .xlsx
+        │
+        ▼  lengüetas 💰 y 📈 (el camino de siempre, ya validado contra ARCA)
+   liquidación
+```
+
+El mail **no se liquida directo, a propósito**. Convertirlo en planilla deja un archivo revisable
+en el medio y hace que la importación termine usando el mismo motor de cálculo ya probado, sin
+abrir un segundo camino que habría que validar aparte.
 
 ## 3. Mapa de funciones en `app.py`
 
@@ -52,6 +72,10 @@ _hoja_tasas(), _hoja_instrucciones()  # helpers de openpyxl para armar las plant
 generar_plantilla_capital()       # arma el .xlsx en blanco para la Lengüeta 1
 generar_plantilla_intereses()     # arma el .xlsx en blanco para la Lengüeta 2
 
+procesar_mail()                   # Lengüeta 0: lee el .eml, muestra la carátula de la boleta,
+                                  # contrasta la suma contra el Monto Demanda, deja revisar
+                                  # fila por fila y baja las planillas ya cargadas.
+armar_planilla()                  # arma el .xlsx con la hoja Deudas a partir de lo revisado
 ```
 
 Archivos que acompañan a `app.py`:
@@ -59,7 +83,9 @@ Archivos que acompañan a `app.py`:
 ```
 tasas.json                        # las tasas. UNICO lugar donde se actualizan (punto 7)
 actualizar_tasas.py               # compara tasas.json contra la página de ARCA
+leer_mail.py                      # lector de los mails de boleta de deuda (punto 6 bis)
 test_motor.py                     # regresión contra las liquidaciones reales de ARCA
+test_leer_mail.py                 # regresión del lector, con un mail inventado
 .github/workflows/control-tasas.yml   # corre el control una vez por semana
 ```
 
@@ -145,6 +171,64 @@ nadie lo note.
 **Salida**: el Excel descargado incluye columnas `Dias_Resarcitorios`, `Dias_Capitalizables` y
 `Dias_Punitorios` para poder auditar de dónde sale cada importe, más una fila de totales con
 importes (no fórmulas, para que se lea igual en cualquier visor).
+
+## 6 bis. El lector de mails: `leer_mail.py`
+
+Los agentes fiscales pegan en el mail la pantalla **"Datos de la Boleta de Deuda"** del sistema
+de ARCA. Ese pegado viaja como tabla HTML, y de ahí sale casi toda la planilla:
+
+| Del mail | A la planilla |
+|---|---|
+| Impuestos - Conceptos - Subconceptos | `Impuesto`, `concepto` |
+| Período (+ Cuota, si es un anticipo) | `Periodo` (`2026-1`, `2026-2`…) |
+| Vencimiento | `Vencimiento` |
+| Monto de la Deuda | `Capital` |
+| Pagos de Capital Registrados | `F. Pago Capital` |
+| **Fecha Sorteo** | `fecha_Demanda` |
+
+`Fecha_Liquidacion` no sale del mail: la elige Agustín según cuándo presenta.
+
+**La fecha de demanda es la Fecha Sorteo, no la "Fecha de Inicio".** Están a un día de
+distancia y es fácil confundirlas. Se verificó contra dos boletas reales cuyas liquidaciones
+ya estaban hechas: en las dos, la fecha usada coincide con la de sorteo.
+
+### Qué se calcula sobre cada fila: manda el subconcepto
+
+Al lado del importe, el agente fiscal escribe una nota a mano ("DEBE", "pto. DJ debe
+intereses", "PRESENTO DDJJ - DEBE INT. RESARCITORIOS + PUNITORIOS + CAPITALIZADOS"…). **Esa
+nota no está normalizada y no se usa para decidir.** Lo que decide es el subconcepto de ARCA,
+porque dice qué *es* el importe:
+
+| Subconcepto | El importe es | Va a |
+|---|---|---|
+| SALDO DE DECLARACIÓN JURADA, ANTICIPOS | capital impositivo | 💰 Capital + Intereses |
+| INTERESES RESARCITORIOS | interés ya devengado | 📈 Juicio a los Intereses |
+| cualquier otro, o nota con plan de pagos | — | queda en **revisar** |
+
+La nota igual se lee y se muestra, y sirve de contraste: si dice que el capital está cancelado
+pero la boleta no registra el pago, la fila se marca. Sin esa fecha los punitorios corren hasta
+la liquidación en vez de hasta el pago, y el importe sale de más.
+
+### Controles
+
+- **La suma de las filas contra el `Monto Demanda` de la boleta.** Es el mejor control que hay,
+  porque los dos números vienen del mismo mail. Si no coinciden, algo se leyó mal o quedó afuera,
+  y se avisa en rojo.
+- Las filas en `revisar` **no salen en ninguna planilla** hasta que se clasifiquen a mano.
+- El remitente se contrasta contra una lista de agentes fiscales conocidos, si se pasa una. No
+  bloquea: el mail puede venir reenviado. Solo avisa.
+
+### Limitaciones conocidas
+
+- Lee **`.eml`** (Gmail: *⋮ → Descargar mensaje*). No lee `.msg` de Outlook, que es un formato
+  binario distinto y necesitaría una dependencia nueva.
+- Necesita la versión con formato del mail. Si el agente fiscal manda una **captura de pantalla**
+  en vez de pegar la tabla, no hay nada que leer y la app lo dice.
+- Los acentos rotos de algunos reenvíos ("Perï¿½odo") están contemplados: las comparaciones se
+  hacen sobre el texto pelado a ASCII.
+
+⚠️ **Los mails reales no van al repositorio**, que es público: llevan CUIT, domicilio y deuda de
+contribuyentes. `.gitignore` bloquea `*.eml` y `*.msg`. `test_leer_mail.py` usa un mail inventado.
 
 ## 7. Tasas: `tasas.json`
 
@@ -235,6 +319,13 @@ Streamlit ya pedía uno. Está en el historial de git: si se muda la app, se rec
    de cálculo a ARCA. Los seis que ya están cargados cubren 2024-2025, que es lo que se usa hoy.
 3. Sumar al `test_motor.py` los casos nuevos que vayan apareciendo, en especial los que crucen
    cambios de tasa (son los que más ejercitan el motor).
+4. **Ampliar el vocabulario de subconceptos del lector de mails.** Hoy reconoce SALDO DE
+   DECLARACIÓN JURADA, ANTICIPOS e INTERESES RESARCITORIOS, que es lo que apareció en los mails
+   vistos hasta ahora. Cualquier otro cae en `revisar` — que es el comportamiento correcto, pero
+   si empieza a repetirse alguno conviene agregarlo a `clasificar()`.
+5. **Traer los mails solos.** Hoy hay que bajar el `.eml` y subirlo. Conectar la casilla para que
+   los busque por remitente es una capa aparte, y recién tiene sentido ahora que el lector anda.
+   Pide permisos sobre el correo, así que es una decisión, no solo trabajo.
 
 ### Resuelto
 
