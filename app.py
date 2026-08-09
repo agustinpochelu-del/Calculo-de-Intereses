@@ -10,6 +10,7 @@ from openpyxl.comments import Comment
 from openpyxl.utils import get_column_letter
 
 import leer_mail
+from planillas import COLUMNAS_CAPITAL, COLUMNAS_INTERESES, armar_planilla
 
 # --- CONFIGURACIÓN DE LA PÁGINA ---
 st.set_page_config(page_title="Liquidador ARCA — Estudio Pochelú", page_icon="⚖️", layout="wide")
@@ -922,34 +923,6 @@ def generar_plantilla_intereses():
 # pestaña que corresponda. Suena a paso de más y es a propósito. Así la importación
 # usa el mismo camino de cálculo que ya está probado contra ARCA, y queda una planilla
 # en el medio que se puede abrir, revisar y guardar en el expediente.
-
-COLUMNAS_CAPITAL = ['Impuesto', 'concepto', 'Periodo', 'Vencimiento', 'Capital',
-                    'F. Pago Capital', 'fecha_Demanda', 'Fecha_Liquidacion']
-COLUMNAS_INTERESES = ['Impuesto', 'concepto', 'Periodo', 'Vencimiento', 'Capital',
-                      'fecha_Demanda', 'Fecha_Liquidacion']
-
-
-def armar_planilla(df, columnas):
-    """Arma un Excel con la hoja 'Deudas', igual al que produce la plantilla."""
-    wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.title = "Deudas"
-    _estilo_header(ws, 1, columnas)
-
-    for i, (_, fila) in enumerate(df.iterrows(), start=2):
-        for j, col in enumerate(columnas, start=1):
-            celda = ws.cell(row=i, column=j, value=fila.get(col))
-            if col == 'Capital':
-                celda.number_format = '#,##0.00'
-            elif 'echa' in col or col == 'Vencimiento':
-                celda.number_format = 'DD/MM/YYYY'
-
-    _ajustar_anchos(ws, [26, 24, 12, 14, 16, 14, 14, 16][:len(columnas)])
-    ws.freeze_panes = "A2"
-    buffer = BytesIO()
-    wb.save(buffer)
-    return buffer.getvalue()
-
 
 def _a_fecha(texto):
     """De 'AAAA-MM-DD' a date. None si viene vacío."""

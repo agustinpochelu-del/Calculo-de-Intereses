@@ -97,6 +97,14 @@ class _Tablas(HTMLParser):
             self.celda.append(dato)
 
 
+def _tablas_del_html(html):
+    """Saca las tablas de un pedazo de HTML suelto."""
+    parser = _Tablas()
+    parser.feed(html)
+    parser.close()
+    return parser.tablas
+
+
 def _tablas_del_mail(datos):
     """Devuelve (tablas, remitente, asunto) a partir de los bytes de un .eml."""
     if isinstance(datos, str):
@@ -110,9 +118,7 @@ def _tablas_del_mail(datos):
             "la tabla. Reenvialo sin convertirlo a texto plano."
         )
 
-    parser = _Tablas()
-    parser.feed(parte.get_content())
-    parser.close()
+    tablas = _tablas_del_html(parte.get_content())
 
     remitente = ''
     for cabecera in ('From', 'Reply-To'):
@@ -122,7 +128,7 @@ def _tablas_del_mail(datos):
                 remitente = direcciones[0].lower()
                 break
 
-    return parser.tablas, remitente, str(msg.get('Subject') or '').strip()
+    return tablas, remitente, str(msg.get('Subject') or '').strip()
 
 
 # ── Conversión de los valores ───────────────────────────────────────────────
@@ -367,13 +373,26 @@ def _buscar_dato(tablas, etiqueta):
 # ── Entrada principal ───────────────────────────────────────────────────────
 
 def leer_boleta(datos, remitentes_habilitados=()):
-    """Lee un mail de boleta de deuda y devuelve todo lo que se pudo extraer.
+    """Lee un mail `.eml` de boleta de deuda y devuelve lo que se pudo extraer.
 
     `remitentes_habilitados` es una lista de direcciones. Si se pasa y el mail
     viene de otra, se avisa — pero igual se lee: el mail puede venir reenviado
     y no tiene sentido negarse a leerlo por eso.
     """
-    tablas, remitente, asunto = _tablas_del_mail(datos)
+    return _armar_boleta(*_tablas_del_mail(datos), remitentes_habilitados)
+
+
+def leer_boleta_html(html, remitente='', asunto='', remitentes_habilitados=()):
+    """Igual que `leer_boleta`, pero desde el HTML suelto del cuerpo del mail.
+
+    Es la entrada que usa la importación automática: Gmail devuelve el cuerpo ya
+    separado, sin necesidad de reconstruir el `.eml`.
+    """
+    return _armar_boleta(_tablas_del_html(html), (remitente or '').lower(),
+                         asunto, remitentes_habilitados)
+
+
+def _armar_boleta(tablas, remitente, asunto, remitentes_habilitados=()):
     avisos = []
 
     if remitentes_habilitados:
@@ -395,10 +414,18 @@ def leer_boleta(datos, remitentes_habilitados=()):
                 tabla_pagos = tabla
 
     if tabla_detalle is None:
+        # Distinguir estos dos casos importa para la rutina automática. Un mail sin
+        # ninguna tabla es, casi siempre, otra cosa: una consulta, una constancia de
+        # honorarios. Un mail CON tablas pero sin la de deuda puede ser eso mismo...
+        # o que el formato cambió y dejamos de leer boletas sin enterarnos.
+        if not tablas:
+            raise ValueError(
+                "El mail no trae ninguna tabla: no parece una boleta de deuda."
+            )
         raise ValueError(
-            "No encontré la tabla 'Detalle de Deuda' en el mail. ¿Es una boleta de "
-            "deuda de ARCA? Si el agente fiscal mandó una captura de pantalla en vez "
-            "de pegar la tabla, no hay nada que leer."
+            f"El mail trae {len(tablas)} tabla(s) pero ninguna es el 'Detalle de Deuda'. "
+            "Puede ser otra cosa (honorarios, una consulta), o puede haber cambiado el "
+            "formato de la boleta. Si esto se repite en mails que sí son boletas, avisá."
         )
 
     filas = _leer_detalle(tabla_detalle)
