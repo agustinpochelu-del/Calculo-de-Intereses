@@ -10,6 +10,7 @@ from openpyxl.comments import Comment
 from openpyxl.utils import get_column_letter
 
 import leer_mail
+import veps
 from planillas import COLUMNAS_CAPITAL, COLUMNAS_INTERESES, armar_planilla
 
 # --- CONFIGURACIÓN DE LA PÁGINA ---
@@ -1069,6 +1070,148 @@ def procesar_mail(archivo_subido):
 
 
 # =====================================================================================
+# GENERACIÓN DE VEPs
+# =====================================================================================
+# Una liquidación de ocho vencimientos con capital y los tres intereses son treinta y
+# dos VEPs cargados de a uno. Con un archivo se cargan todos juntos.
+#
+# Nada se tilda solo: casi nunca se paga todo lo liquidado.
+
+def _fecha_de(valor):
+    """La liquidación baja las fechas como texto 'DD/MM/AAAA'."""
+    if valor is None or (isinstance(valor, float) and pd.isna(valor)):
+        return None
+    if isinstance(valor, datetime.date) and not isinstance(valor, datetime.datetime):
+        return valor
+    fecha = pd.to_datetime(valor, dayfirst=True, errors='coerce')
+    return None if pd.isna(fecha) else fecha.date()
+
+
+def procesar_veps(archivo_subido):
+    df = pd.read_excel(archivo_subido)
+
+    # La liquidación trae una fila de totales al pie, que no es una obligación.
+    if 'Vencimiento' not in df.columns:
+        raise ValueError(
+            "El archivo no tiene la columna 'Vencimiento'. ¿Es una liquidación bajada "
+            "de las otras pestañas?")
+    df = df[df['Vencimiento'].notna() & df['Impuesto'].notna()].copy()
+    if df.empty:
+        raise ValueError("No encontré ninguna obligación en el archivo.")
+
+    st.markdown("#### De quién es la deuda y quién paga")
+    c1, c2, c3 = st.columns(3)
+    cuit_contribuyente = c1.text_input(
+        "CUIT del contribuyente", key="vep_cuit_contrib", placeholder="30999999995",
+        help="De quién es la deuda. Define si Ganancias va como sociedad o como persona física.")
+    cuit_generador = c2.text_input(
+        "CUIT del generador", key="vep_cuit_gen", placeholder="20999999997",
+        help="Quién sube el archivo a ARCA. Puede ser el mismo que el contribuyente.")
+    fecha_exp = c3.date_input(
+        "Vence el", value=datetime.date.today() + datetime.timedelta(days=veps.DIAS_EXPIRACION),
+        format="DD/MM/YYYY", key="vep_expira",
+        help="Hasta cuándo se puede pagar el VEP. Por defecto, diez días.")
+
+    if not cuit_contribuyente.strip():
+        st.info("Cargá el CUIT del contribuyente para seguir.")
+        return
+
+    persona = veps.tipo_de_persona(cuit_contribuyente)
+    if persona:
+        st.caption(f"CUIT de persona **{persona}**"
+                   + (" — Ganancias va como sociedad (10)." if persona == 'juridica'
+                      else " — Ganancias va como persona física (11)."))
+    else:
+        st.warning(
+            "Ese CUIT no empieza en un prefijo conocido (20, 23, 24 y 27 son personas "
+            "físicas; 30, 33 y 34, jurídicas). Si hay Ganancias, no voy a poder decidir "
+            "el código.")
+
+    filas = df.to_dict('records')
+    for fila in filas:
+        fila['Vencimiento'] = _fecha_de(fila.get('Vencimiento'))
+    candidatos = veps.preparar(filas, cuit_contribuyente)
+
+    if not candidatos:
+        st.warning("No hay ningún importe mayor a cero para pagar.")
+        return
+
+    # --- La grilla: un renglón por importe, todo destildado ---
+    st.markdown("#### Elegí qué vas a pagar")
+    st.caption(
+        f"Cada importe de la liquidación es un VEP aparte. Hay **{len(candidatos)}** "
+        "para elegir, y arrancan todos sin tildar.")
+
+    tabla = pd.DataFrame([{
+        'Pagar': False,
+        'Concepto': {'Capital': 'Capital', 'Interes_Resarcitorio': 'Resarcitorios',
+                     'Interes_Capitalizable': 'Capitalizables',
+                     'Interes_Punitorio': 'Punitorios'}[c['columna']],
+        'Impuesto': c['Impuesto'],
+        'Vencimiento': c['Vencimiento'],
+        'Período': c['periodo'],
+        'Cuota': c['cuota'] or '',
+        'Importe': c['importe'],
+        'Form.': c['formulario'] or '',
+        'Problema': c['aviso'],
+    } for c in candidatos])
+
+    editado = st.data_editor(
+        tabla, use_container_width=True, hide_index=True, key="vep_editor",
+        column_config={
+            'Pagar': st.column_config.CheckboxColumn("Pagar", width="small"),
+            'Vencimiento': st.column_config.DateColumn("Vencimiento", format="DD/MM/YYYY", disabled=True),
+            'Importe': st.column_config.NumberColumn("Importe", format="%.2f", disabled=True),
+            'Problema': st.column_config.TextColumn("Problema", width="medium", disabled=True),
+        },
+        disabled=['Concepto', 'Impuesto', 'Período', 'Cuota', 'Form.'])
+
+    elegidos = [c for c, tildado in zip(candidatos, editado['Pagar']) if tildado]
+
+    # --- Los que no se pueden armar ---
+    con_problema = [c for c in elegidos if not c['formulario']]
+    if con_problema:
+        st.error(
+            f"**{len(con_problema)} de los tildados no se pueden armar** y no van a salir "
+            "en el archivo. Mirá la columna «Problema»: hasta que eso se resuelva, esos "
+            "importes se cargan a mano en ARCA.")
+
+    listos = [c for c in elegidos if c['formulario']]
+    total = round(sum(c['importe'] for c in listos), 2)
+
+    c1, c2 = st.columns([1, 2])
+    c1.metric("VEPs a generar", len(listos))
+    c2.metric("Total a pagar", formato_arg(total))
+
+    if not listos:
+        st.info("Tildá al menos un importe que se pueda armar.")
+        return
+
+    if not cuit_generador.strip():
+        st.info("Falta el CUIT del generador, que es quien sube el archivo a ARCA.")
+        return
+
+    try:
+        contenido = veps.armar_txt(listos, cuit_generador, fecha_exp)
+    except ValueError as e:
+        st.error(str(e))
+        return
+
+    st.download_button(
+        f"⬇️ Bajar el archivo ({len(listos)} VEPs · {formato_arg(total)})",
+        data=contenido.encode('utf-8'),
+        file_name=veps.nombre_archivo(cuit_generador),
+        mime="text/plain", key="bajar_veps")
+
+    st.caption(
+        "Se sube en ARCA, en **Presentación de DDJJ y Pagos → VEP → Generación masiva**. "
+        "La primera vez, probá con un solo importe tildado: si ese entra, el resto también.")
+
+    with st.expander("Ver el archivo antes de bajarlo"):
+        st.code(contenido, language=None)
+
+
+# =====================================================================================
 # INTERFAZ
 # =====================================================================================
 # El acceso NO se controla acá: la app está marcada como privada en Streamlit
@@ -1079,8 +1222,8 @@ def procesar_mail(archivo_subido):
 # queda abierta a cualquiera con la URL. Hubo una puerta propia (acceso.py, con usuario
 # y contraseña) que se sacó para no encadenar dos logins: está en el historial de git
 # por si hace falta recuperarla.
-tab0, tab1, tab2 = st.tabs(["📧 Importar desde el mail", "💰 Juicio por Capital + Intereses",
-                            "📈 Juicio a los Intereses"])
+tab0, tab1, tab2, tab3 = st.tabs(["📧 Importar desde el mail", "💰 Juicio por Capital + Intereses",
+                                  "📈 Juicio a los Intereses", "🧾 Generar VEPs"])
 
 with tab0:
     st.markdown(
@@ -1133,3 +1276,17 @@ with tab2:
                 procesar_juicio_intereses(archivo_2)
         except Exception as e:
             st.error(f"Error al procesar: {e}")
+
+with tab3:
+    st.markdown(
+        "Subí una **liquidación ya calculada** (la que bajás de las pestañas de al lado) "
+        "y armo el archivo para generar todos los VEPs juntos, en vez de cargarlos de a uno."
+    )
+    archivo_3 = st.file_uploader("Arrastrá la liquidación aquí", type=["xlsx"], key="uploader_veps")
+    if archivo_3 is not None:
+        try:
+            procesar_veps(archivo_3)
+        except ValueError as e:
+            st.error(str(e))
+        except Exception as e:
+            st.error(f"No pude armar los VEPs: {e}")

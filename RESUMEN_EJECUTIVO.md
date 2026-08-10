@@ -230,6 +230,71 @@ la liquidación en vez de hasta el pago, y el importe sale de más.
 ⚠️ **Los mails reales no van al repositorio**, que es público: llevan CUIT, domicilio y deuda de
 contribuyentes. `.gitignore` bloquea `*.eml` y `*.msg`. `test_leer_mail.py` usa un mail inventado.
 
+## 6 ter. Generación de VEPs: `veps.py`
+
+Pagar una liquidación a mano significa cargar un VEP por cada importe: ocho vencimientos
+con capital, resarcitorios, capitalizables y punitorios son **treinta y dos**. Con un
+archivo se cargan todos juntos.
+
+### El formato
+
+Dos tipos de registro. El encabezado, una sola línea de 33 caracteres:
+
+```
+01 · CUIT del generador (11) · 20001 · 00100 · 003 · 003 · cantidad+1 (4)
+```
+
+Los últimos cuatro dígitos son la cantidad de VEPs **más uno**: el total de líneas del
+archivo contando el encabezado.
+
+Y una línea por VEP:
+
+```
+02 <VEP fechaExpiracion="AAAA-MM-DD" nroFormulario="…" codTipoPago="…"
+        contribuyenteCUIT="…" concepto="…" subConcepto="…" periodoFiscal="AAAAMM"
+        importe="…" [anticipoCuota="…"]><Obligacion impuesto="…" importe="…"/></VEP>
+```
+
+⚠️ **El formato sale de un archivo que ARCA aceptó, no de la guía publicada.** La guía
+(`VerGuia.aspx?id=365`) usa `precio` en vez de `importe` y pone espacios alrededor de
+los `=`; es de 2010 y quedó vieja. `test_veps.py` fija el archivo real y lo reproduce
+carácter por carácter: si hay que tocar `veps.py`, ese test falla, y el archivo de
+referencia se cambia recién cuando haya uno nuevo que ARCA haya aceptado.
+
+Detalles que importan: los códigos van **sin ceros a la izquierda** (`concepto="19"`, no
+`"019"`), y cuando no hay cuota el atributo `anticipoCuota` **no aparece**.
+
+### De la liquidación a los VEPs
+
+Cada fila da hasta cuatro VEPs, y lo que los distingue es el subconcepto:
+
+| Columna de la liquidación | subConcepto |
+|---|---|
+| `Capital` | el mismo número que el concepto (19 DDJJ / 191 Anticipo) |
+| `Interes_Resarcitorio` | 51 |
+| `Interes_Capitalizable` | 52 |
+| `Interes_Punitorio` | 94 |
+
+Los anticipos llevan el período con el **mes en 00** (`202600`) y el número de cuota en
+`anticipoCuota`. El resto lleva su mes.
+
+**Ganancias depende del CUIT**: 10 para sociedades, 11 para personas físicas. Se deduce
+del prefijo — 20, 23, 24 y 27 son personas físicas; 30, 33 y 34, jurídicas. Cualquier
+otro prefijo no se adivina: se marca para que lo elija Agustín.
+
+`conceptos_veps.json` tiene las 45 combinaciones de impuesto / concepto / subconcepto con
+su formulario y código de pago, salidas de la planilla del estudio. Lo que no está en esa
+tabla **no sale en el archivo**: se marca con el motivo, igual que las filas en «revisar».
+
+### En pantalla
+
+Lengüeta 🧾: se sube una liquidación ya calculada y aparece un renglón por importe, con
+una casilla **destildada**. Casi nunca se paga todo lo liquidado, así que nada se
+selecciona solo. Abajo, la cantidad de VEPs y el total, y el archivo con el nombre que
+espera ARCA (`F20001.cuit.<cuit>.fecha.<AAAAMMDD>.txt`).
+
+Se sube en ARCA en **Presentación de DDJJ y Pagos → VEP → Generación masiva**.
+
 ## 7. Tasas: `tasas.json`
 
 Las tasas viven en **`tasas.json`**, al lado de `app.py`. Es el único lugar donde se
@@ -344,5 +409,11 @@ Streamlit ya pedía uno. Está en el historial de git: si se muda la app, se rec
   - venc 26/06/2025 → demanda 13/03/2026, capital $2.452.500,32 (arranca sobre el final de un tramo)
   - venc 13/01/2026, con intereses capitalizables, capital $973.922,83
   - 8 anticipos de Ganancias, demanda 10/06/2026, capital $366.033,27 c/u
-- `Luis_Rojas.xlsx` — Lengüeta 1, caso con `F. Pago Capital` posterior a la demanda (Caso A).
-- `Int_Lima_Sur.xlsx` — Lengüeta 2, formato "Juicio a los Intereses".
+- Dos planillas de clientes que quedan **solo en la carpeta local**, nunca en el
+  repositorio: una de Lengüeta 1 con `F. Pago Capital` posterior a la demanda (Caso A) y
+  otra de Lengüeta 2, en formato "Juicio a los Intereses".
+- Un archivo de VEPs que ARCA aceptó, reproducido en `test_veps.py` con el CUIT cambiado.
+
+⚠️ **Este repositorio es público.** No van nombres de contribuyentes, CUITs reales,
+mails ni planillas de clientes. `.gitignore` bloquea `*.eml`, `*.msg` y `*.xlsx`; el
+resto es cuestión de no escribirlo.

@@ -1,0 +1,378 @@
+{
+  "origen": "Planilla \"conceptos ARCA VEPS.xlsx\" del estudio",
+  "actualizado": "2026-08-09",
+  "impuestos": {
+    "10": "GANANCIAS SOCIEDADES",
+    "11": "GANANCIAS PERSONAS FISICAS",
+    "30": "IVA",
+    "49": "HONORARIOS DE REPRES.DEL FISCO",
+    "180": "IMPTO.S/BIENES PERSONALES",
+    "211": "BP-ACCIONES O PARTICIPACIONES",
+    "217": "SICORE-IMPTO.A LAS GANANCIAS",
+    "301": "EMPLEADOR-APORTES SEG. SOCIAL",
+    "351": "CONTRIBUCIONES SEG. SOCIAL",
+    "767": "RET ART 79 LEY GCIAS INC A,BYC"
+  },
+  "combinaciones": [
+    {
+      "impuesto": 10,
+      "concepto": 19,
+      "subconcepto": 19,
+      "formulario": 800,
+      "codigo_pago": 30,
+      "texto": "GANANCIAS SOCIEDADES - Declaracion Jurada - Declaracion Jurada"
+    },
+    {
+      "impuesto": 10,
+      "concepto": 19,
+      "subconcepto": 51,
+      "formulario": 800,
+      "codigo_pago": 30,
+      "texto": "GANANCIAS SOCIEDADES - Declaracion Jurada - Intereses Resarcitorio"
+    },
+    {
+      "impuesto": 10,
+      "concepto": 19,
+      "subconcepto": 52,
+      "formulario": 800,
+      "codigo_pago": 30,
+      "texto": "GANANCIAS SOCIEDADES - Declaracion Jurada - Intereses Capitalizables"
+    },
+    {
+      "impuesto": 10,
+      "concepto": 19,
+      "subconcepto": 94,
+      "formulario": 800,
+      "codigo_pago": 30,
+      "texto": "GANANCIAS SOCIEDADES - Declaracion Jurada - Intereses Punitorios"
+    },
+    {
+      "impuesto": 10,
+      "concepto": 191,
+      "subconcepto": 191,
+      "formulario": 800,
+      "codigo_pago": 30,
+      "texto": "GANANCIAS SOCIEDADES - Anticipo - Anticipo"
+    },
+    {
+      "impuesto": 10,
+      "concepto": 191,
+      "subconcepto": 51,
+      "formulario": 800,
+      "codigo_pago": 30,
+      "texto": "GANANCIAS SOCIEDADES - Anticipo - Intereses Resarcitorio"
+    },
+    {
+      "impuesto": 10,
+      "concepto": 191,
+      "subconcepto": 52,
+      "formulario": 800,
+      "codigo_pago": 30,
+      "texto": "GANANCIAS SOCIEDADES - Anticipo - Intereses Capitalizables"
+    },
+    {
+      "impuesto": 10,
+      "concepto": 191,
+      "subconcepto": 94,
+      "formulario": 800,
+      "codigo_pago": 30,
+      "texto": "GANANCIAS SOCIEDADES - Anticipo - Intereses Punitorios"
+    },
+    {
+      "impuesto": 11,
+      "concepto": 19,
+      "subconcepto": 19,
+      "formulario": 800,
+      "codigo_pago": 30,
+      "texto": "GANANCIAS PERSONAS FISICAS - Declaracion Jurada - Declaracion Jurada"
+    },
+    {
+      "impuesto": 11,
+      "concepto": 19,
+      "subconcepto": 51,
+      "formulario": 800,
+      "codigo_pago": 30,
+      "texto": "GANANCIAS PERSONAS FISICAS - Declaracion Jurada - Intereses Resarcitorio"
+    },
+    {
+      "impuesto": 11,
+      "concepto": 19,
+      "subconcepto": 52,
+      "formulario": 800,
+      "codigo_pago": 30,
+      "texto": "GANANCIAS PERSONAS FISICAS - Declaracion Jurada - Intereses Capitalizables"
+    },
+    {
+      "impuesto": 11,
+      "concepto": 19,
+      "subconcepto": 94,
+      "formulario": 800,
+      "codigo_pago": 30,
+      "texto": "GANANCIAS PERSONAS FISICAS - Declaracion Jurada - Intereses Punitorios"
+    },
+    {
+      "impuesto": 11,
+      "concepto": 191,
+      "subconcepto": 191,
+      "formulario": 800,
+      "codigo_pago": 30,
+      "texto": "GANANCIAS PERSONAS FISICAS - Anticipo - Anticipo"
+    },
+    {
+      "impuesto": 11,
+      "concepto": 191,
+      "subconcepto": 51,
+      "formulario": 800,
+      "codigo_pago": 30,
+      "texto": "GANANCIAS PERSONAS FISICAS - Anticipo - Intereses Resarcitorio"
+    },
+    {
+      "impuesto": 11,
+      "concepto": 191,
+      "subconcepto": 52,
+      "formulario": 800,
+      "codigo_pago": 30,
+      "texto": "GANANCIAS PERSONAS FISICAS - Anticipo - Intereses Capitalizables"
+    },
+    {
+      "impuesto": 11,
+      "concepto": 191,
+      "subconcepto": 94,
+      "formulario": 800,
+      "codigo_pago": 30,
+      "texto": "GANANCIAS PERSONAS FISICAS - Anticipo - Intereses Punitorios"
+    },
+    {
+      "impuesto": 30,
+      "concepto": 19,
+      "subconcepto": 19,
+      "formulario": 800,
+      "codigo_pago": 30,
+      "texto": "IVA - Declaracion Jurada - Declaracion Jurada"
+    },
+    {
+      "impuesto": 30,
+      "concepto": 19,
+      "subconcepto": 51,
+      "formulario": 800,
+      "codigo_pago": 30,
+      "texto": "IVA - Declaracion Jurada - Intereses Resarcitorio"
+    },
+    {
+      "impuesto": 30,
+      "concepto": 19,
+      "subconcepto": 52,
+      "formulario": 800,
+      "codigo_pago": 30,
+      "texto": "IVA - Declaracion Jurada - Intereses Capitalizables"
+    },
+    {
+      "impuesto": 30,
+      "concepto": 19,
+      "subconcepto": 94,
+      "formulario": 800,
+      "codigo_pago": 30,
+      "texto": "IVA - Declaracion Jurada - Intereses Punitorios"
+    },
+    {
+      "impuesto": 49,
+      "concepto": 19,
+      "subconcepto": 19,
+      "formulario": 800,
+      "codigo_pago": 30,
+      "texto": "HONORARIOS DE REPRES.DEL FISCO - Declaracion Jurada - Declaracion Jurada"
+    },
+    {
+      "impuesto": 180,
+      "concepto": 19,
+      "subconcepto": 19,
+      "formulario": 800,
+      "codigo_pago": 30,
+      "texto": "IMPTO.S/BIENES PERSONALES - Declaracion Jurada - Declaracion Jurada"
+    },
+    {
+      "impuesto": 180,
+      "concepto": 19,
+      "subconcepto": 51,
+      "formulario": 800,
+      "codigo_pago": 30,
+      "texto": "IMPTO.S/BIENES PERSONALES - Declaracion Jurada - Intereses Resarcitorio"
+    },
+    {
+      "impuesto": 180,
+      "concepto": 19,
+      "subconcepto": 52,
+      "formulario": 800,
+      "codigo_pago": 30,
+      "texto": "IMPTO.S/BIENES PERSONALES - Declaracion Jurada - Intereses Capitalizables"
+    },
+    {
+      "impuesto": 180,
+      "concepto": 19,
+      "subconcepto": 94,
+      "formulario": 800,
+      "codigo_pago": 30,
+      "texto": "IMPTO.S/BIENES PERSONALES - Declaracion Jurada - Intereses Punitorios"
+    },
+    {
+      "impuesto": 211,
+      "concepto": 19,
+      "subconcepto": 19,
+      "formulario": 800,
+      "codigo_pago": 30,
+      "texto": "BP-ACCIONES O PARTICIPACIONES - Declaracion Jurada - Declaracion Jurada"
+    },
+    {
+      "impuesto": 211,
+      "concepto": 19,
+      "subconcepto": 51,
+      "formulario": 800,
+      "codigo_pago": 30,
+      "texto": "BP-ACCIONES O PARTICIPACIONES - Declaracion Jurada - Intereses Resarcitorio"
+    },
+    {
+      "impuesto": 211,
+      "concepto": 19,
+      "subconcepto": 52,
+      "formulario": 800,
+      "codigo_pago": 30,
+      "texto": "BP-ACCIONES O PARTICIPACIONES - Declaracion Jurada - Intereses Capitalizables"
+    },
+    {
+      "impuesto": 211,
+      "concepto": 19,
+      "subconcepto": 94,
+      "formulario": 800,
+      "codigo_pago": 30,
+      "texto": "BP-ACCIONES O PARTICIPACIONES - Declaracion Jurada - Intereses Punitorios"
+    },
+    {
+      "impuesto": 217,
+      "concepto": 19,
+      "subconcepto": 19,
+      "formulario": 800,
+      "codigo_pago": 30,
+      "texto": "SICORE-IMPTO.A LAS GANANCIAS - Declaracion Jurada - Declaracion Jurada"
+    },
+    {
+      "impuesto": 217,
+      "concepto": 19,
+      "subconcepto": 51,
+      "formulario": 800,
+      "codigo_pago": 30,
+      "texto": "SICORE-IMPTO.A LAS GANANCIAS - Declaracion Jurada - Intereses Resarcitorio"
+    },
+    {
+      "impuesto": 217,
+      "concepto": 19,
+      "subconcepto": 52,
+      "formulario": 800,
+      "codigo_pago": 30,
+      "texto": "SICORE-IMPTO.A LAS GANANCIAS - Declaracion Jurada - Intereses Capitalizables"
+    },
+    {
+      "impuesto": 217,
+      "concepto": 19,
+      "subconcepto": 94,
+      "formulario": 800,
+      "codigo_pago": 30,
+      "texto": "SICORE-IMPTO.A LAS GANANCIAS - Declaracion Jurada - Intereses Punitorios"
+    },
+    {
+      "impuesto": 301,
+      "concepto": 19,
+      "subconcepto": 19,
+      "formulario": 1931,
+      "codigo_pago": 30,
+      "texto": "EMPLEADOR-APORTES SEG. SOCIAL - Declaracion Jurada - Declaracion Jurada"
+    },
+    {
+      "impuesto": 301,
+      "concepto": 19,
+      "subconcepto": 51,
+      "formulario": 800,
+      "codigo_pago": 30,
+      "texto": "EMPLEADOR-APORTES SEG. SOCIAL - Declaracion Jurada - Intereses Resarcitorio"
+    },
+    {
+      "impuesto": 301,
+      "concepto": 19,
+      "subconcepto": 52,
+      "formulario": 800,
+      "codigo_pago": 30,
+      "texto": "EMPLEADOR-APORTES SEG. SOCIAL - Declaracion Jurada - Intereses Capitalizables"
+    },
+    {
+      "impuesto": 301,
+      "concepto": 19,
+      "subconcepto": 94,
+      "formulario": 800,
+      "codigo_pago": 30,
+      "texto": "EMPLEADOR-APORTES SEG. SOCIAL - Declaracion Jurada - Intereses Punitorios"
+    },
+    {
+      "impuesto": 351,
+      "concepto": 19,
+      "subconcepto": 19,
+      "formulario": 1931,
+      "codigo_pago": 30,
+      "texto": "CONTRIBUCIONES SEG. SOCIAL - Declaracion Jurada - Declaracion Jurada"
+    },
+    {
+      "impuesto": 351,
+      "concepto": 19,
+      "subconcepto": 51,
+      "formulario": 800,
+      "codigo_pago": 30,
+      "texto": "CONTRIBUCIONES SEG. SOCIAL - Declaracion Jurada - Intereses Resarcitorio"
+    },
+    {
+      "impuesto": 351,
+      "concepto": 19,
+      "subconcepto": 52,
+      "formulario": 800,
+      "codigo_pago": 30,
+      "texto": "CONTRIBUCIONES SEG. SOCIAL - Declaracion Jurada - Intereses Capitalizables"
+    },
+    {
+      "impuesto": 351,
+      "concepto": 19,
+      "subconcepto": 94,
+      "formulario": 800,
+      "codigo_pago": 30,
+      "texto": "CONTRIBUCIONES SEG. SOCIAL - Declaracion Jurada - Intereses Punitorios"
+    },
+    {
+      "impuesto": 767,
+      "concepto": 19,
+      "subconcepto": 19,
+      "formulario": 800,
+      "codigo_pago": 30,
+      "texto": "RET ART 79 LEY GCIAS INC A,BYC - Declaracion Jurada - Declaracion Jurada"
+    },
+    {
+      "impuesto": 767,
+      "concepto": 19,
+      "subconcepto": 51,
+      "formulario": 800,
+      "codigo_pago": 30,
+      "texto": "RET ART 79 LEY GCIAS INC A,BYC - Declaracion Jurada - Intereses Resarcitorio"
+    },
+    {
+      "impuesto": 767,
+      "concepto": 19,
+      "subconcepto": 52,
+      "formulario": 800,
+      "codigo_pago": 30,
+      "texto": "RET ART 79 LEY GCIAS INC A,BYC - Declaracion Jurada - Intereses Capitalizables"
+    },
+    {
+      "impuesto": 767,
+      "concepto": 19,
+      "subconcepto": 94,
+      "formulario": 800,
+      "codigo_pago": 30,
+      "texto": "RET ART 79 LEY GCIAS INC A,BYC - Declaracion Jurada - Intereses Punitorios"
+    }
+  ]
+}
