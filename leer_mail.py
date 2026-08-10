@@ -94,7 +94,11 @@ class _Tablas(HTMLParser):
 
     def handle_data(self, dato):
         if self.en_celda:
-            self.celda.append(dato)
+            # En HTML un salto de línea del código fuente es un espacio más, no un
+            # corte de renglón: el único corte es <br>. Los programas de correo
+            # acomodan el texto en una columna cualquiera al reenviar, y si eso se
+            # tomara como renglón, un dato partido al medio pasaría por dos.
+            self.celda.append(re.sub(r'\s+', ' ', dato))
 
 
 def _tablas_del_html(html):

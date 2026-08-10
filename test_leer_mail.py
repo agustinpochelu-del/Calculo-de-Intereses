@@ -134,6 +134,28 @@ check("impuesto del IVA (dos líneas, nombre largo)", iva['Impuesto'],
 check("vencimiento del IVA", iva['Vencimiento'], "2024-06-25")
 
 # =====================================================================================
+print("\n2 bis) Un reenvío que acomoda el texto no parte los datos")
+# Lo encontró la rutina automática: de cuatro reenvíos de la misma boleta, tres
+# clasificaban mal. El programa de correo de origen había acomodado el texto en la
+# columna 40, y "SALDO DE DECLARACIÓN JURADA" quedó cortado por un salto de línea
+# suelto en el HTML. En HTML ese salto es un espacio, no un renglón: el único
+# renglón es <br>. Si se toma como renglón, un dato partido al medio pasa por dos
+# y el subconcepto termina siendo cualquier cosa.
+acomodado = HTML.replace(
+    "SALDO DE DECLARACI&Oacute;N JURADA",
+    "SALDO DE DECLARACI&Oacute;N\n            JURADA").replace(
+    "IMPUESTO A LAS GANANCIAS", "IMPUESTO A LAS\n        GANANCIAS")
+
+b_acomodado = leer_mail.leer_boleta(armar_mail(acomodado))
+primera = b_acomodado['filas'][0]
+check("el subconcepto no se parte", primera['concepto'], "SALDO DE DECLARACIÓN JURADA")
+check("el impuesto tampoco", primera['Impuesto'], "IMPUESTO A LAS GANANCIAS")
+check("clasifica igual que sin acomodar", primera['Destino'], leer_mail.CAPITAL)
+check("y lee las mismas filas", len(b_acomodado['filas']), len(b['filas']))
+check("con la misma suma",
+      round(sum(f['Capital'] for f in b_acomodado['filas']), 2), 1482000.00)
+
+# =====================================================================================
 print("\n3) La clasificación que se propone")
 # Manda el subconcepto de ARCA, no la nota que escribe el agente fiscal.
 check("saldo de DDJJ -> capital", saldo['Destino'], leer_mail.CAPITAL)
