@@ -517,7 +517,11 @@ def mostrar_tabla_tasas(df_tasas_res, df_tasas_pun, meta, ventana_res, ventana_p
 # =====================================================================================
 # DESCARGA DEL EXCEL LIQUIDADO
 # =====================================================================================
-def boton_descarga(df_deudas, nombre_archivo, columnas_moneda, columnas_totalizar):
+def boton_descarga(df_deudas, nombre_archivo, columnas_moneda, columnas_totalizar,
+                   clave=""):
+    # `clave` distingue las instancias: la misma liquidacion puede estar en pantalla
+    # dos veces (subida en su lengueta y liquidada desde el mail), y Streamlit pide
+    # que cada control tenga un nombre propio.
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = 'Liquidacion_Apremio'
@@ -561,17 +565,26 @@ def boton_descarga(df_deudas, nombre_archivo, columnas_moneda, columnas_totaliza
             file_name=nombre_archivo,
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True,
-            key=nombre_archivo
+            key=f"{nombre_archivo}_{clave}"
         )
 
 
 # =====================================================================================
 # LENGÜETA 1: JUICIO POR CAPITAL + INTERESES (capital impositivo impago, con o sin pago posterior)
 # =====================================================================================
-def procesar_juicio_capital(archivo_subido):
-    df_deudas = pd.read_excel(archivo_subido, sheet_name='Deudas')
+def procesar_juicio_capital(origen, clave="capital"):
+    """`origen` es el Excel que se sube, o la planilla ya armada en memoria.
+
+    Lo segundo es lo que usa la importación desde el mail: los datos ya están
+    revisados en pantalla, no tiene sentido obligar a bajar el archivo y volver
+    a subirlo. El cálculo es el mismo por los dos caminos.
+    """
+    if isinstance(origen, pd.DataFrame):
+        df_deudas = origen.copy()
+    else:
+        df_deudas = pd.read_excel(origen, sheet_name='Deudas')
+        avisar_hojas_de_tasas_ignoradas(origen)
     df_tasas_res, df_tasas_pun, meta = cargar_tasas()
-    avisar_hojas_de_tasas_ignoradas(archivo_subido)
 
     df_deudas.columns = df_deudas.columns.str.strip()
     df_deudas = df_deudas.dropna(subset=['Vencimiento'])
@@ -689,7 +702,7 @@ def procesar_juicio_capital(archivo_subido):
         ventana_pun=(df_deudas['fecha_Demanda'].min(), ultima_fecha_liq))
 
     boton_descarga(
-        df_deudas_fmt[columnas_detalle], "Liquidacion_ARCA_Apremio.xlsx",
+        df_deudas_fmt[columnas_detalle], "Liquidacion_ARCA_Apremio.xlsx", clave=clave,
         columnas_moneda=['Capital', 'Interes_Resarcitorio', 'Interes_Capitalizable',
                          'Interes_Punitorio', 'Total_Actualizado'],
         columnas_totalizar=['Capital', 'Interes_Resarcitorio', 'Interes_Capitalizable',
@@ -698,17 +711,21 @@ def procesar_juicio_capital(archivo_subido):
     # Los importes ya están calculados acá: no hace falta bajar la planilla y volver
     # a subirla para pagar. Va plegado porque no siempre se paga en el momento.
     with st.expander("🧾 Generar los VEPs para pagar esto"):
-        generar_veps(df_deudas, "capital")
+        generar_veps(df_deudas, clave)
 
 
 # =====================================================================================
 # LENGÜETA 2: JUICIO A LOS INTERESES (el capital impositivo ya está pago; se demanda por
 # los intereses resarcitorios impagos, que pasan a ser la nueva "base" de la deuda)
 # =====================================================================================
-def procesar_juicio_intereses(archivo_subido):
-    df_deudas = pd.read_excel(archivo_subido, sheet_name='Deudas')
+def procesar_juicio_intereses(origen, clave="intereses"):
+    """Igual que `procesar_juicio_capital`: acepta el Excel o la planilla en memoria."""
+    if isinstance(origen, pd.DataFrame):
+        df_deudas = origen.copy()
+    else:
+        df_deudas = pd.read_excel(origen, sheet_name='Deudas')
+        avisar_hojas_de_tasas_ignoradas(origen)
     df_tasas_res, df_tasas_pun, meta = cargar_tasas()
-    avisar_hojas_de_tasas_ignoradas(archivo_subido)
 
     df_deudas.columns = df_deudas.columns.str.strip()
     df_deudas = df_deudas.dropna(subset=['Vencimiento'])
@@ -789,12 +806,12 @@ def procesar_juicio_intereses(archivo_subido):
         titulo_res="**Resarcitorios**")
 
     boton_descarga(
-        df_deudas_fmt[columnas_detalle], "Liquidacion_ARCA_Intereses.xlsx",
+        df_deudas_fmt[columnas_detalle], "Liquidacion_ARCA_Intereses.xlsx", clave=clave,
         columnas_moneda=['Capital', 'Interes_Resarcitorio', 'Interes_Punitorio', 'Total_Actualizado'],
         columnas_totalizar=['Capital', 'Interes_Resarcitorio', 'Interes_Punitorio', 'Total_Actualizado'])
 
     with st.expander("🧾 Generar los VEPs para pagar esto"):
-        generar_veps(df_deudas, "intereses")
+        generar_veps(df_deudas, clave)
 
 
 # =====================================================================================
@@ -1047,34 +1064,56 @@ def procesar_mail(archivo_subido):
                    f"{'fila' if pendientes == 1 else 'filas'}** sin clasificar. "
                    "No van a salir en las planillas.")
 
-    # --- Las planillas ---
-    st.markdown("#### Bajá las planillas")
+    # --- Liquidar ---
+    st.markdown("#### Liquidá")
     listo = editado.copy()
     listo['fecha_Demanda'] = pd.Timestamp(fecha_demanda)
     listo['Fecha_Liquidacion'] = pd.Timestamp(fecha_liquidacion)
 
     base = (boleta['contribuyente'] or 'boleta').title().replace(' ', '_')[:40]
-    c1, c2 = st.columns(2)
 
-    for col, destino, columnas, etiqueta, archivo in (
-        (c1, leer_mail.CAPITAL, COLUMNAS_CAPITAL, "Capital + Intereses", "Capital"),
-        (c2, leer_mail.INTERESES, COLUMNAS_INTERESES, "Juicio a los Intereses", "Intereses"),
+    # La planilla se puede bajar —sirve para el expediente y para volver otro día—
+    # pero no hace falta bajarla y volver a subirla: los datos ya están revisados acá.
+    partes = []
+    for destino, columnas, etiqueta, archivo in (
+        (leer_mail.CAPITAL, COLUMNAS_CAPITAL, "Capital + Intereses", "Capital"),
+        (leer_mail.INTERESES, COLUMNAS_INTERESES, "Juicio a los Intereses", "Intereses"),
     ):
         parte = listo[listo['Destino'] == destino]
+        if not parte.empty:
+            partes.append((parte, columnas, etiqueta, archivo))
+
+    if not partes:
+        st.info("No hay filas clasificadas todavía.")
+        return
+
+    columnas_ui = st.columns(len(partes))
+    for col, (parte, columnas, etiqueta, archivo) in zip(columnas_ui, partes):
+        resumen = (f"{len(parte)} {'fila' if len(parte) == 1 else 'filas'} · "
+                   f"{formato_arg(round(parte['Capital'].sum(), 2))}")
         with col:
-            if parte.empty:
-                st.caption(f"Sin filas para **{etiqueta}**.")
-                continue
+            st.markdown(f"**{etiqueta}** — {resumen}")
+            st.checkbox("Liquidar acá mismo", key=f"liquidar_{archivo}")
             st.download_button(
-                f"⬇️ {etiqueta} ({len(parte)} "
-                f"{'fila' if len(parte) == 1 else 'filas'} · "
-                f"{formato_arg(round(parte['Capital'].sum(), 2))})",
+                "⬇️ Bajar la planilla",
                 data=armar_planilla(parte, columnas),
                 file_name=f"{base}_{archivo}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 key=f"bajar_{archivo}")
 
-    st.caption("Después subí cada planilla en la pestaña que le corresponde, acá al lado.")
+    # Fuera de las columnas: la liquidación necesita el ancho completo, y además
+    # trae su propio desplegable de VEPs, que no puede ir adentro de otro.
+    for parte, columnas, etiqueta, archivo in partes:
+        if not st.session_state.get(f"liquidar_{archivo}"):
+            continue
+        st.divider()
+        st.markdown(f"### {etiqueta}")
+        procesador = (procesar_juicio_capital if archivo == "Capital"
+                      else procesar_juicio_intereses)
+        try:
+            procesador(parte[columnas], clave=f"mail_{archivo}")
+        except Exception as e:
+            st.error(f"No pude liquidar {etiqueta}: {e}")
 
 
 # =====================================================================================

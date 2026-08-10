@@ -33,15 +33,22 @@ mail del agente fiscal (.eml)
         ▼  lengüeta 📧 — leer_mail.py
    tabla revisable  ──► control: la suma de las filas contra el "Monto Demanda" de la boleta
         │
-        ▼  se bajan una o dos planillas .xlsx
+        ▼  se tilda "Liquidar acá mismo"      (o se baja la planilla y se sube en 💰 / 📈)
+   liquidación                                 ambos caminos usan el mismo motor
         │
-        ▼  lengüetas 💰 y 📈 (el camino de siempre, ya validado contra ARCA)
-   liquidación
+        ▼  al pie del resultado: 🧾 Generar los VEPs
+   archivo .txt para ARCA
 ```
 
-El mail **no se liquida directo, a propósito**. Convertirlo en planilla deja un archivo revisable
-en el medio y hace que la importación termine usando el mismo motor de cálculo ya probado, sin
-abrir un segundo camino que habría que validar aparte.
+**Un solo paso de revisión, y ninguno de trámite.** La tabla se revisa una vez, y de ahí sale
+todo sin bajar ni volver a subir nada. La planilla igual se puede bajar —sirve para el
+expediente y para retomar otro día— pero no es obligatoria.
+
+Las dos funciones de liquidación aceptan tanto el Excel subido como la planilla ya armada en
+memoria, así que el cálculo es exactamente el mismo por los dos caminos: no hay un segundo
+motor que haya que validar aparte. Cada instancia lleva una `clave` propia porque la misma
+liquidación puede estar en pantalla dos veces (subida en su lengüeta y liquidada desde el
+mail) y Streamlit pide que cada control tenga nombre propio.
 
 ## 3. Mapa de funciones en `app.py`
 
