@@ -9,6 +9,43 @@ intereses resarcitorios, punitorios y capitalizables.
 El objetivo del cálculo no es aproximarse: la liquidación se presenta en un expediente, así que
 tiene que dar **el mismo importe al centavo** que el detalle de cálculo que emite ARCA.
 
+## 1 bis. Dónde quedamos — 09/08/2026
+
+Lo que antes era una calculadora de intereses con diferencias contra ARCA hoy cubre el
+circuito entero: **llega el mail del agente fiscal y sale el archivo de pago.**
+
+| Pieza | Estado | Verificado contra |
+|---|---|---|
+| Motor de intereses | andando | 4 liquidaciones reales de ARCA, **al centavo** |
+| Tabla de tasas | 42 tramos, control semanal automático | la página oficial de ARCA |
+| Lector de boletas por mail | andando | 2 boletas reales; totales que cierran solos |
+| Rutina de correo | lun/mié/vie 9:00 | barrido de 90 días, corrido y correcto |
+| Cierre por honorarios | andando | 2 constancias reales, una con 2 juicios |
+| Generador de VEPs | andando | **archivo aceptado por ARCA**, 15 VEPs |
+
+### Lo que hay que saber antes de tocar nada
+
+1. **Los números salen de código probado, nunca de una lectura.** Es la regla que ordena
+   todo el diseño: la rutina de correo busca los mails pero no interpreta importes, y el
+   archivo de VEPs lo arma `veps.py`, no el asistente.
+2. **Lo que no se puede determinar, se marca y no entra en la salida.** Vale para las filas
+   de una boleta, las combinaciones que faltan en la tabla de conceptos y los remitentes
+   desconocidos. Nunca se completa con una suposición.
+3. **Tres archivos de referencia están congelados**: las liquidaciones de ARCA en
+   `test_motor.py` y el TXT aceptado en `test_veps.py`. Si un test falla, se rompió algo:
+   no se ajusta la referencia para que pase.
+4. **El repositorio es público.** Ni un CUIT real, ni un nombre de contribuyente, ni
+   siquiera como ejemplo en un marcador de campo.
+5. **`Memoria.md` está fuera de git** y tiene el porqué de cada decisión rara. Leerlo antes
+   ahorra repetir discusiones ya cerradas.
+
+### Lo que quedó a medias
+
+- La grilla de tildar VEPs se probó por lógica y con datos reales, **pero no se la vio
+  funcionando en pantalla**: falta confirmar el comportamiento de tildar y destildar.
+- La rutina de correo lleva una sola corrida. Las próximas van a mostrar casos que hoy no
+  conocemos, y ahí es donde conviene afinarla.
+
 ## 2. Estado actual
 
 La app tiene **tres lengüetas** (`st.tabs`). Las dos de liquidación son independientes entre sí,
@@ -383,28 +420,62 @@ Streamlit ya pedía uno. Está en el historial de git: si se muda la app, se rec
   `liquidador.estudiopochelu.com`, ese subdominio tiene que **redirigir** a la URL
   `.streamlit.app`. Para que el dominio propio quede en la barra de direcciones habría
   que mudar la app a otro hosting.
-- Dependencias: `streamlit`, `pandas`, `openpyxl`. El control de tasas no suma ninguna
-  (solo librería estándar).
+- Dependencias: `streamlit`, `pandas`, `openpyxl`. El control de tasas y el lector de
+  mails no suman ninguna (solo librería estándar).
+- **Configuración privada**, en Streamlit Cloud → Settings → Secrets:
+
+  ```toml
+  agentes_fiscales = "una@ejemplo.com, otra@ejemplo.com"
+  ```
+
+  Son las direcciones de los agentes fiscales que mandan las boletas. **No van en el
+  código**: el repositorio es público y son direcciones personales. Si falta, la app
+  funciona igual pero no controla de quién vino el mail, y lo dice en pantalla.
+- **Datos que se editan a mano y viven fuera de git**: `conceptos ARCA VEPS.xlsx` (después
+  de tocarla, correr `actualizar_conceptos.py`) y `Memoria.md`. Si se cambia de máquina,
+  hay que llevarlos aparte: no están en el repositorio.
+- **Fuera de la app**: la rutina `boletas-arca` corre en la aplicación de escritorio de
+  Claude, no en Streamlit. Revisa el correo lunes, miércoles y viernes a las 9, y deja las
+  planillas en `importados/`. Solo corre con la aplicación abierta.
 - Sin base de datos ni almacenamiento persistente: todo el estado vive en el Excel que sube el
   usuario en cada corrida, más las constantes de tasas embebidas en el código.
 
 ## 10. Pendientes / backlog
 
-1. **Confirmar el capital de la liquidación de anticipos de Ganancias.** ARCA liquidó sobre
-   $366.033,27 y el Excel de entrada dice $336.033,27 — diferencia exacta de $30.000, con los
-   dígitos 3 y 6 dados vuelta. Es un dato de origen, no un problema de cálculo.
-2. Completar el campo `dias` de los tramos que todavía están en `null` (36 de 42). No hace falta
-   hacerlo de golpe: la app avisa en pantalla cuando le toca usar uno, y ahí se pide el detalle
-   de cálculo a ARCA. Los seis que ya están cargados cubren 2024-2025, que es lo que se usa hoy.
-3. Sumar al `test_motor.py` los casos nuevos que vayan apareciendo, en especial los que crucen
-   cambios de tasa (son los que más ejercitan el motor).
-4. **Ampliar el vocabulario de subconceptos del lector de mails.** Hoy reconoce SALDO DE
-   DECLARACIÓN JURADA, ANTICIPOS e INTERESES RESARCITORIOS, que es lo que apareció en los mails
-   vistos hasta ahora. Cualquier otro cae en `revisar` — que es el comportamiento correcto, pero
-   si empieza a repetirse alguno conviene agregarlo a `clasificar()`.
-5. **Traer los mails solos.** Hoy hay que bajar el `.eml` y subirlo. Conectar la casilla para que
-   los busque por remitente es una capa aparte, y recién tiene sentido ahora que el lector anda.
-   Pide permisos sobre el correo, así que es una decisión, no solo trabajo.
+Ordenados por lo que más conviene atacar primero.
+
+### Para la próxima sesión
+
+1. **Ver la grilla de VEPs funcionando en pantalla.** Se probó el armado del archivo hasta
+   el byte y la preparación de los datos con casos reales, pero no se llegó a operar la
+   casilla de tildar en el navegador. Es lo único del circuito sin confirmar visualmente.
+2. **Afinar la rutina de correo con lo que aparezca.** Lleva una sola corrida. Cada tanda
+   nueva de mails va a traer casos que hoy no conocemos: subconceptos distintos, formatos
+   raros, boletas que no encajan. `Memoria.md` se va a ir llenando solo.
+3. **Ampliar el vocabulario de subconceptos del lector.** Hoy reconoce SALDO DE DECLARACIÓN
+   JURADA, ANTICIPOS e INTERESES RESARCITORIOS. Cualquier otro cae en `revisar`, que es el
+   comportamiento correcto — pero si empieza a repetirse alguno, conviene sumarlo a
+   `clasificar()` en vez de clasificarlo a mano cada vez.
+
+### Cuando haya datos para hacerlo
+
+4. **Completar el campo `dias` de los tramos en `null`** (36 de 42). No hace falta de golpe:
+   la app avisa cuando le toca usar uno sin los días oficiales, y ahí se le pide el detalle
+   de cálculo a ARCA. Los seis cargados cubren 2024-2025, que es lo que se usa hoy.
+5. **Sumar casos a `test_motor.py`**, sobre todo los que crucen cambios de tasa: son los que
+   más ejercitan el motor.
+6. **Completar la tabla de conceptos** a medida que aparezcan combinaciones nuevas. Después
+   de editar la planilla, correr `actualizar_conceptos.py`, que valida antes de escribir.
+
+### Ideas sin definir
+
+7. **Que la rutina deje las planillas liquidadas, no solo importadas.** Hoy arma la planilla
+   y avisa; podría además liquidar y dejar el resultado. Requiere decidir qué fecha de
+   liquidación usar sin que nadie la elija, que no es obvio.
+8. **Un registro de qué se pagó.** Hoy el circuito termina en el archivo TXT; no queda
+   asentado qué VEPs se generaron ni cuáles se pagaron efectivamente.
+9. **Sumar el liquidador de honorarios.** Las constancias hoy solo cierran el juicio; el
+   importe de honorarios se lee pero no se hace nada con él.
 
 ### Resuelto
 
