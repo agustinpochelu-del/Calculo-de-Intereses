@@ -373,6 +373,38 @@
       "formulario": 800,
       "codigo_pago": 30,
       "texto": "RET ART 79 LEY GCIAS INC A,BYC - Declaracion Jurada - Intereses Punitorios"
+    },
+    {
+      "impuesto": 180,
+      "concepto": 191,
+      "subconcepto": 191,
+      "formulario": 800,
+      "codigo_pago": 30,
+      "texto": "IMPTO.S/BIENES PERSONALES - Anticipo - Anticipo"
+    },
+    {
+      "impuesto": 180,
+      "concepto": 191,
+      "subconcepto": 51,
+      "formulario": 800,
+      "codigo_pago": 30,
+      "texto": "IMPTO.S/BIENES PERSONALES - Anticipo - Intereses Resarcitorio"
+    },
+    {
+      "impuesto": 180,
+      "concepto": 191,
+      "subconcepto": 52,
+      "formulario": 800,
+      "codigo_pago": 30,
+      "texto": "IMPTO.S/BIENES PERSONALES - Anticipo - Intereses Capitalizables"
+    },
+    {
+      "impuesto": 180,
+      "concepto": 191,
+      "subconcepto": 94,
+      "formulario": 800,
+      "codigo_pago": 30,
+      "texto": "IMPTO.S/BIENES PERSONALES - Anticipo - Intereses Punitorios"
     }
   ]
 }

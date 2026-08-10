@@ -255,11 +255,18 @@ Y una línea por VEP:
         importe="…" [anticipoCuota="…"]><Obligacion impuesto="…" importe="…"/></VEP>
 ```
 
-⚠️ **El formato sale de un archivo que ARCA aceptó, no de la guía publicada.** La guía
+✅ **Probado contra ARCA el 09/08/2026**: se subió un archivo generado por `veps.py` con
+importes inventados y los quince VEPs salieron bien. Cubría Ganancias declaración jurada
+con los cuatro subconceptos, anticipos con cuotas 1 y 2, Bienes Personales, IVA y aportes
+de seguridad social —incluido el caso de formularios distintos en la misma boleta (1931
+para el capital de seguridad social, 800 para sus intereses).
+
+⚠️ **El formato sale de ese archivo, no de la guía publicada.** La guía
 (`VerGuia.aspx?id=365`) usa `precio` en vez de `importe` y pone espacios alrededor de
 los `=`; es de 2010 y quedó vieja. `test_veps.py` fija el archivo real y lo reproduce
 carácter por carácter: si hay que tocar `veps.py`, ese test falla, y el archivo de
-referencia se cambia recién cuando haya uno nuevo que ARCA haya aceptado.
+referencia se cambia recién cuando haya uno nuevo que ARCA haya aceptado. No hay otra
+forma de validarlo que subirlo.
 
 Detalles que importan: los códigos van **sin ceros a la izquierda** (`concepto="19"`, no
 `"019"`), y cuando no hay cuota el atributo `anticipoCuota` **no aparece**.
