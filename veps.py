@@ -58,6 +58,23 @@ COLUMNAS_IMPORTE = {
 CONCEPTO_DDJJ = 19
 CONCEPTO_ANTICIPO = 191
 
+# --- Impuestos anuales ---
+# El período fiscal de un impuesto anual lleva el mes en 00, siempre: tanto la
+# declaración jurada como los anticipos. Lo que los diferencia es la cuota, que
+# en los anticipos va 1, 2, 3… y en la declaración jurada va sin cuota.
+#
+# Los mensuales (IVA, seguridad social, SICORE, retenciones) llevan su mes.
+#
+# En la práctica la boleta de ARCA ya viene bien —escribe "Período: 2024/0" para
+# Ganancias y "2024/5" para IVA—, así que esto es una red para las planillas
+# cargadas a mano, donde es fácil poner el mes del vencimiento sin pensarlo.
+ANUALES = {
+    10,   # Ganancias sociedades
+    11,   # Ganancias personas físicas
+    180,  # Bienes personales
+    211,  # BP - acciones o participaciones
+}
+
 
 def cargar_conceptos():
     """Lee la tabla de impuestos, conceptos y subconceptos del estudio."""
@@ -146,22 +163,32 @@ def concepto_de(nombre):
 
 # ── Período fiscal ─────────────────────────────────────────────────────────
 
-def periodo_fiscal(periodo, vencimiento, concepto):
+def periodo_fiscal(periodo, vencimiento, concepto, impuesto=None):
     """Devuelve (AAAAMM, cuota, aviso).
 
-    Los anticipos se declaran con el mes en 00 y el número de cuota aparte. El
-    resto lleva el mes que corresponde.
+    Tres casos:
+
+      • Anticipos → mes en 00 y el número de cuota aparte.
+      • Impuesto anual (ver ANUALES) → mes en 00 y sin cuota.
+      • Impuesto mensual → su mes, sin cuota.
 
     `periodo` viene de la planilla como '2026-1' (año y cuota, para anticipos)
     o '2024/5' (año y mes). Si no se puede leer, se cae al vencimiento.
     """
     texto = str(periodo or '').strip()
+    anual = impuesto in ANUALES
 
     m = re.match(r'^(\d{4})\s*[-/]\s*(\d{1,2})$', texto)
     if m:
         anio, segundo = int(m.group(1)), int(m.group(2))
         if concepto == CONCEPTO_ANTICIPO:
             return f"{anio}00", segundo, ''
+        if anual:
+            # La declaración jurada de un anual va siempre con el mes en 00.
+            aviso = '' if segundo == 0 else (
+                f'El período decía "{periodo}", pero es un impuesto anual: el mes va '
+                f'en 00. Quedó {anio}00.')
+            return f"{anio}00", 0, aviso
         return f"{anio}{segundo:02d}", 0, ''
 
     if vencimiento is not None:
@@ -170,6 +197,9 @@ def periodo_fiscal(periodo, vencimiento, concepto):
             return f"{anio}00", 0, (
                 f'No pude leer la cuota del período "{periodo}". Puse el año del '
                 'vencimiento y la cuota en cero: revisalo.')
+        if anual:
+            return f"{anio}00", 0, (
+                f'No pude leer el período "{periodo}": usé el año del vencimiento.')
         return f"{anio}{mes:02d}", 0, (
             f'No pude leer el período "{periodo}": usé el mes del vencimiento.')
 
@@ -218,6 +248,19 @@ def armar_txt(pagos, cuit_generador, fecha_expiracion=None):
     """Devuelve el contenido completo del archivo."""
     if not pagos:
         raise ValueError("No hay ningún importe seleccionado para pagar.")
+
+    # Un pago sin formulario o sin código no se puede armar. La pantalla ya los
+    # aparta, pero se corta también acá: un archivo con nroFormulario="None"
+    # tiene forma de archivo y ARCA lo rechaza, o peor, entra mal.
+    incompletos = [p for p in pagos if not p.get('formulario') or not p.get('codigo_pago')]
+    if incompletos:
+        detalle = ", ".join(
+            f"impuesto {p.get('impuesto')} / concepto {p.get('concepto')} / "
+            f"subconcepto {p.get('subconcepto')}" for p in incompletos[:3])
+        raise ValueError(
+            f"{len(incompletos)} de los importes no tienen formulario ni código de pago "
+            f"({detalle}). Esas combinaciones faltan en la tabla de conceptos del estudio: "
+            "agregalas o sacá esos importes de la selección.")
     if fecha_expiracion is None:
         fecha_expiracion = datetime.date.today() + datetime.timedelta(days=DIAS_EXPIRACION)
 
@@ -251,7 +294,7 @@ def preparar(filas, cuit_contribuyente):
         impuesto, aviso_imp = impuesto_de(fila.get('Impuesto'), cuit_contribuyente)
         concepto, aviso_con = concepto_de(fila.get('concepto'))
         periodo, cuota, aviso_per = periodo_fiscal(
-            fila.get('Periodo'), fila.get('Vencimiento'), concepto)
+            fila.get('Periodo'), fila.get('Vencimiento'), concepto, impuesto)
 
         for columna, subconcepto in COLUMNAS_IMPORTE.items():
             importe = fila.get(columna)

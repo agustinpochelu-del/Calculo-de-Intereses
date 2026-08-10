@@ -695,6 +695,11 @@ def procesar_juicio_capital(archivo_subido):
         columnas_totalizar=['Capital', 'Interes_Resarcitorio', 'Interes_Capitalizable',
                             'Interes_Punitorio', 'Total_Actualizado'])
 
+    # Los importes ya están calculados acá: no hace falta bajar la planilla y volver
+    # a subirla para pagar. Va plegado porque no siempre se paga en el momento.
+    with st.expander("🧾 Generar los VEPs para pagar esto"):
+        generar_veps(df_deudas, "capital")
+
 
 # =====================================================================================
 # LENGÜETA 2: JUICIO A LOS INTERESES (el capital impositivo ya está pago; se demanda por
@@ -787,6 +792,9 @@ def procesar_juicio_intereses(archivo_subido):
         df_deudas_fmt[columnas_detalle], "Liquidacion_ARCA_Intereses.xlsx",
         columnas_moneda=['Capital', 'Interes_Resarcitorio', 'Interes_Punitorio', 'Total_Actualizado'],
         columnas_totalizar=['Capital', 'Interes_Resarcitorio', 'Interes_Punitorio', 'Total_Actualizado'])
+
+    with st.expander("🧾 Generar los VEPs para pagar esto"):
+        generar_veps(df_deudas, "intereses")
 
 
 # =====================================================================================
@@ -1088,13 +1096,23 @@ def _fecha_de(valor):
 
 
 def procesar_veps(archivo_subido):
+    """Entrada por archivo, para liquidaciones viejas que ya están en el disco."""
     df = pd.read_excel(archivo_subido)
-
-    # La liquidación trae una fila de totales al pie, que no es una obligación.
     if 'Vencimiento' not in df.columns:
         raise ValueError(
             "El archivo no tiene la columna 'Vencimiento'. ¿Es una liquidación bajada "
             "de las otras pestañas?")
+    generar_veps(df, "subido")
+
+
+def generar_veps(df, clave):
+    """La grilla de selección y el archivo.
+
+    `clave` distingue las tres instancias que puede haber en pantalla a la vez
+    (las dos liquidaciones y la pestaña de archivo), porque Streamlit necesita
+    que cada control tenga un nombre propio.
+    """
+    # La liquidación trae una fila de totales al pie, que no es una obligación.
     df = df[df['Vencimiento'].notna() & df['Impuesto'].notna()].copy()
     if df.empty:
         raise ValueError("No encontré ninguna obligación en el archivo.")
@@ -1102,14 +1120,14 @@ def procesar_veps(archivo_subido):
     st.markdown("#### De quién es la deuda y quién paga")
     c1, c2, c3 = st.columns(3)
     cuit_contribuyente = c1.text_input(
-        "CUIT del contribuyente", key="vep_cuit_contrib", placeholder="30999999995",
+        "CUIT del contribuyente", key=f"vep_cuit_contrib_{clave}", placeholder="30999999995",
         help="De quién es la deuda. Define si Ganancias va como sociedad o como persona física.")
     cuit_generador = c2.text_input(
-        "CUIT del generador", key="vep_cuit_gen", placeholder="20999999997",
+        "CUIT del generador", key=f"vep_cuit_gen_{clave}", placeholder="20999999997",
         help="Quién sube el archivo a ARCA. Puede ser el mismo que el contribuyente.")
     fecha_exp = c3.date_input(
         "Vence el", value=datetime.date.today() + datetime.timedelta(days=veps.DIAS_EXPIRACION),
-        format="DD/MM/YYYY", key="vep_expira",
+        format="DD/MM/YYYY", key=f"vep_expira_{clave}",
         help="Hasta cuándo se puede pagar el VEP. Por defecto, diez días.")
 
     if not cuit_contribuyente.strip():
@@ -1157,7 +1175,7 @@ def procesar_veps(archivo_subido):
     } for c in candidatos])
 
     editado = st.data_editor(
-        tabla, use_container_width=True, hide_index=True, key="vep_editor",
+        tabla, use_container_width=True, hide_index=True, key=f"vep_editor_{clave}",
         column_config={
             'Pagar': st.column_config.CheckboxColumn("Pagar", width="small"),
             'Vencimiento': st.column_config.DateColumn("Vencimiento", format="DD/MM/YYYY", disabled=True),
@@ -1201,7 +1219,7 @@ def procesar_veps(archivo_subido):
         f"⬇️ Bajar el archivo ({len(listos)} VEPs · {formato_arg(total)})",
         data=contenido.encode('utf-8'),
         file_name=veps.nombre_archivo(cuit_generador),
-        mime="text/plain", key="bajar_veps")
+        mime="text/plain", key=f"bajar_veps_{clave}")
 
     st.caption(
         "Se sube en ARCA, en **Presentación de DDJJ y Pagos → VEP → Generación masiva**. "
@@ -1279,8 +1297,9 @@ with tab2:
 
 with tab3:
     st.markdown(
-        "Subí una **liquidación ya calculada** (la que bajás de las pestañas de al lado) "
-        "y armo el archivo para generar todos los VEPs juntos, en vez de cargarlos de a uno."
+        "Para una liquidación **de otro día**, que ya tenés guardada. Si acabás de "
+        "calcularla, no hace falta pasar por acá: al pie del resultado, en las pestañas "
+        "de al lado, está el mismo generador."
     )
     archivo_3 = st.file_uploader("Arrastrá la liquidación aquí", type=["xlsx"], key="uploader_veps")
     if archivo_3 is not None:

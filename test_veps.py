@@ -125,12 +125,34 @@ check("  y lo dice", 'No reconozco' in aviso, True)
 # =====================================================================================
 print("\n6) El período fiscal")
 F = datetime.date
-check("anticipo 2026-3", veps.periodo_fiscal('2026-3', F(2026, 5, 13), 191)[:2], ('202600', 3))
-check("DDJJ 2024/5", veps.periodo_fiscal('2024/5', F(2024, 6, 25), 19)[:2], ('202405', 0))
-check("DDJJ 2025/12", veps.periodo_fiscal('2025/12', F(2026, 1, 13), 19)[:2], ('202512', 0))
-periodo, cuota, aviso = veps.periodo_fiscal('', F(2024, 6, 25), 19)
+check("anticipo 2026-3", veps.periodo_fiscal('2026-3', F(2026, 5, 13), 191, 10)[:2], ('202600', 3))
+check("IVA 2024/5 (mensual)", veps.periodo_fiscal('2024/5', F(2024, 6, 25), 19, 30)[:2], ('202405', 0))
+check("seg. social 2025/12 (mensual)",
+      veps.periodo_fiscal('2025/12', F(2026, 1, 13), 19, 301)[:2], ('202512', 0))
+periodo, cuota, aviso = veps.periodo_fiscal('', F(2024, 6, 25), 19, 30)
 check("sin período, cae al vencimiento", periodo, '202406')
 check("  y avisa", bool(aviso), True)
+
+print("\n   los anuales llevan el mes en 00, con cuota o sin ella")
+# Ganancias y Bienes Personales son anuales: la declaración jurada va con el mes
+# en 00 y sin cuota; los anticipos, con el mes en 00 y la cuota que corresponda.
+check("Ganancias DDJJ 2024/0", veps.periodo_fiscal('2024/0', F(2025, 6, 26), 19, 10)[:2],
+      ('202400', 0))
+check("Bienes Personales DDJJ 2024/0",
+      veps.periodo_fiscal('2024/0', F(2025, 6, 26), 19, 180)[:2], ('202400', 0))
+check("Ganancias anticipo cuota 1", veps.periodo_fiscal('2026-1', F(2025, 10, 13), 191, 11)[:2],
+      ('202600', 1))
+check("Bienes Personales anticipo cuota 2",
+      veps.periodo_fiscal('2026-2', F(2025, 11, 13), 191, 180)[:2], ('202600', 2))
+
+# La red: si una planilla cargada a mano pone el mes de un anual, se corrige y se avisa.
+periodo, cuota, aviso = veps.periodo_fiscal('2024/6', F(2025, 6, 26), 19, 10)
+check("un anual con mes real se corrige a 00", periodo, '202400')
+check("  y lo avisa", 'anual' in aviso, True)
+
+# Sin período fiscal legible, un anual usa el año del vencimiento, no el mes.
+periodo, _, aviso = veps.periodo_fiscal('', F(2025, 6, 26), 19, 10)
+check("un anual sin período usa solo el año", periodo, '202500')
 
 # =====================================================================================
 print("\n7) La liquidación completa: cada fila da hasta cuatro VEPs")
@@ -182,6 +204,16 @@ try:
     print("  FALLA protesta con la lista vacía")
 except ValueError:
     print("  ok    protesta con la lista vacía")
+
+# Un pago sin formulario no puede llegar al archivo. La pantalla ya los aparta,
+# pero si alguna vez se llama a armar_txt() desde otro lado, tiene que cortar:
+# un archivo con nroFormulario="None" tiene forma de archivo y no sirve.
+try:
+    veps.armar_txt([dict(PAGOS[0], formulario=None)], CUIT)
+    fallos.append("un pago sin formulario tendría que fallar")
+    print("  FALLA no deja pasar un pago sin formulario")
+except ValueError as e:
+    check("no deja pasar un pago sin formulario", 'faltan en la tabla' in str(e), True)
 
 # =====================================================================================
 print("\n9) El nombre del archivo")
