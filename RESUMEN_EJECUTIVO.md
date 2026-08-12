@@ -337,12 +337,30 @@ otro prefijo no se adivina: se marca para que lo elija Agustín.
 su formulario y código de pago, salidas de la planilla del estudio. Lo que no está en esa
 tabla **no sale en el archivo**: se marca con el motivo, igual que las filas en «revisar».
 
+### El capital ya pago no genera VEP
+
+Si la fila trae `F. Pago Capital`, ese capital está pago y **no se le arma VEP**: sería
+pagarlo dos veces. Los intereses sí, que es lo que se sigue debiendo. En el caso real de
+los ocho anticipos esto es la diferencia entre 32 y 24 VEPs, y entre incluir o no
+$2.928.266,16 ya pagos. La pantalla dice cuántas obligaciones quedaron sin su capital,
+para que no parezca que se perdieron.
+
 ### En pantalla
 
-Lengüeta 🧾: se sube una liquidación ya calculada y aparece un renglón por importe, con
-una casilla **destildada**. Casi nunca se paga todo lo liquidado, así que nada se
-selecciona solo. Abajo, la cantidad de VEPs y el total, y el archivo con el nombre que
-espera ARCA (`F20001.cuit.<cuit>.fecha.<AAAAMMDD>.txt`).
+Aparece un renglón por importe, con una casilla **destildada**. Casi nunca se paga todo
+lo liquidado, así que nada se selecciona solo.
+
+Arriba hay un **filtro por tipo** (capital, resarcitorios, capitalizables, punitorios)
+para pagar solo una clase de importe. El filtro define qué está en juego: **lo que no se
+ve, no se paga.** Sacar un tipo lo saca del juego en vez de dejarlo tildado a escondidas,
+que es la forma en que un filtro puede hacer daño. Al lado, "Tildar todo" para lo visible.
+
+Abajo, la cantidad de VEPs y el total, y el archivo con el nombre que espera ARCA
+(`F20001.cuit.<cuit>.fecha.<AAAAMMDD>.txt`).
+
+El CUIT del contribuyente llega precargado cuando la liquidación viene de un mail: ya
+salió de la boleta. El del generador se carga a mano, porque quién sube el archivo cambia
+según el caso.
 
 Se sube en ARCA en **Presentación de DDJJ y Pagos → VEP → Generación masiva**.
 

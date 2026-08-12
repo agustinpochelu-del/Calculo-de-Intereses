@@ -1125,6 +1125,16 @@ def procesar_mail(archivo_subido):
 #
 # Nada se tilda solo: casi nunca se paga todo lo liquidado.
 
+# Cómo se llama en pantalla cada columna de importes. El orden es el que se muestra
+# en el filtro: primero el capital, después los intereses en el orden en que corren.
+NOMBRE_DE_COLUMNA = {
+    'Capital': 'Capital',
+    'Interes_Resarcitorio': 'Resarcitorios',
+    'Interes_Capitalizable': 'Capitalizables',
+    'Interes_Punitorio': 'Punitorios',
+}
+
+
 def _fecha_de(valor):
     """La liquidación baja las fechas como texto 'DD/MM/AAAA'."""
     if valor is None or (isinstance(valor, float) and pd.isna(valor)):
@@ -1202,15 +1212,42 @@ def generar_veps(df, clave, cuit=""):
 
     # --- La grilla: un renglón por importe, todo destildado ---
     st.markdown("#### Elegí qué vas a pagar")
+
+    # Los capitales ya pagos no aparecen: sería pagarlos dos veces. Se dice, para
+    # que no parezca que se perdieron.
+    if 'F. Pago Capital' in df.columns:
+        pagos = int(df['F. Pago Capital'].notna().sum())
+        if pagos:
+            st.caption(
+                f"No están los capitales de **{pagos} "
+                f"{'obligación' if pagos == 1 else 'obligaciones'}** que la boleta "
+                "registra como pagas: de esas solo se deben los intereses.")
+
+    # El filtro define qué está en juego: lo que no se ve, no se paga. Así no
+    # quedan importes tildados escondidos detrás de un filtro.
+    presentes = {NOMBRE_DE_COLUMNA[c['columna']] for c in candidatos}
+    opciones = [n for n in NOMBRE_DE_COLUMNA.values() if n in presentes]
+
+    c1, c2 = st.columns([3, 1])
+    tipos = c1.multiselect(
+        "Qué tipos vas a pagar", opciones, default=opciones, key=f"vep_tipos_{clave}",
+        help="Solo lo que quede acá entra en la grilla, y solo lo de la grilla puede "
+             "pagarse. Sacando un tipo desaparece del juego, no queda tildado a escondidas.")
+    todos = c2.checkbox("Tildar todo", key=f"vep_todos_{clave}",
+                        help="Tilda de una lo que quedó visible.")
+
+    visibles = [c for c in candidatos if NOMBRE_DE_COLUMNA[c['columna']] in tipos]
+    if not visibles:
+        st.info("Elegí al menos un tipo de importe.")
+        return
+
     st.caption(
-        f"Cada importe de la liquidación es un VEP aparte. Hay **{len(candidatos)}** "
-        "para elegir, y arrancan todos sin tildar.")
+        f"Cada importe es un VEP aparte: hay **{len(visibles)}** en la grilla"
+        + (f", de {len(candidatos)} en total." if len(visibles) != len(candidatos) else "."))
 
     tabla = pd.DataFrame([{
-        'Pagar': False,
-        'Concepto': {'Capital': 'Capital', 'Interes_Resarcitorio': 'Resarcitorios',
-                     'Interes_Capitalizable': 'Capitalizables',
-                     'Interes_Punitorio': 'Punitorios'}[c['columna']],
+        'Pagar': todos,
+        'Concepto': NOMBRE_DE_COLUMNA[c['columna']],
         'Impuesto': c['Impuesto'],
         'Vencimiento': c['Vencimiento'],
         'Período': c['periodo'],
@@ -1218,7 +1255,7 @@ def generar_veps(df, clave, cuit=""):
         'Importe': c['importe'],
         'Form.': c['formulario'] or '',
         'Problema': c['aviso'],
-    } for c in candidatos])
+    } for c in visibles])
 
     editado = st.data_editor(
         tabla, use_container_width=True, hide_index=True, key=f"vep_editor_{clave}",
@@ -1230,7 +1267,7 @@ def generar_veps(df, clave, cuit=""):
         },
         disabled=['Concepto', 'Impuesto', 'Período', 'Cuota', 'Form.'])
 
-    elegidos = [c for c, tildado in zip(candidatos, editado['Pagar']) if tildado]
+    elegidos = [c for c, tildado in zip(visibles, editado['Pagar']) if tildado]
 
     # --- Los que no se pueden armar ---
     con_problema = [c for c in elegidos if not c['formulario']]

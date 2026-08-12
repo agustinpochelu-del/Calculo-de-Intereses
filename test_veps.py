@@ -189,6 +189,29 @@ check("el encabezado dice 0033", txt[:33][-4:], "0033")
 sin_punitorios = [dict(f, Interes_Punitorio=0) for f in FILAS]
 check("un importe en cero no genera VEP", len(veps.preparar(sin_punitorios, "30999999995")), 24)
 
+print("\n   el capital ya pago no genera VEP")
+# Si la boleta registra la fecha de pago del capital, ese capital esta pago: un VEP
+# por el seria pagarlo dos veces. Los intereses, que es lo que se sigue debiendo, si.
+pagados = [dict(f, **{'F. Pago Capital': F(2026, 8, 3)}) for f in FILAS]
+c_pagados = veps.preparar(pagados, "30999999995")
+check("8 filas x 3 intereses = 24 VEPs", len(c_pagados), 24)
+check("ninguno es de capital",
+      [c for c in c_pagados if c['columna'] == 'Capital'], [])
+check("los tres intereses siguen estando",
+      sorted({c['columna'] for c in c_pagados}),
+      ['Interes_Capitalizable', 'Interes_Punitorio', 'Interes_Resarcitorio'])
+
+# Una fecha vacía no cuenta como pago, en ninguna de sus formas.
+import math
+for vacio, como in ((None, 'None'), ('', 'cadena vacía'), (float('nan'), 'NaN')):
+    con_vacio = [dict(f, **{'F. Pago Capital': vacio}) for f in FILAS]
+    check(f"  {como} no es un pago", len(veps.preparar(con_vacio, "30999999995")), 32)
+
+# Mezcla: algunas pagas y otras no.
+mezcla = [dict(f, **{'F. Pago Capital': F(2026, 8, 3) if i < 3 else None})
+          for i, f in enumerate(FILAS)]
+check("3 pagas y 5 impagas -> 3x3 + 5x4 = 29", len(veps.preparar(mezcla, "30999999995")), 29)
+
 # =====================================================================================
 print("\n8) Lo que no se puede resolver, se marca (no se adivina)")
 raras = [{'Impuesto': 'IMPUESTO A LOS SELLOS', 'concepto': 'DECLARACION JURADA',

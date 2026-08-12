@@ -213,6 +213,17 @@ def _importe(valor):
     return f"{round(float(valor), 2):.2f}"
 
 
+def _sin_dato(valor):
+    """True si el valor viene vacío: None, cadena vacía, NaN o NaT.
+
+    Se hace sin pandas —este módulo no lo necesita— aprovechando que ni NaN ni
+    NaT son iguales a sí mismos.
+    """
+    if valor is None or valor == '':
+        return True
+    return valor != valor
+
+
 def linea_vep(pago, fecha_expiracion):
     """Arma la línea de detalle de un VEP."""
     cuota = ''
@@ -296,9 +307,17 @@ def preparar(filas, cuit_contribuyente):
         periodo, cuota, aviso_per = periodo_fiscal(
             fila.get('Periodo'), fila.get('Vencimiento'), concepto, impuesto)
 
+        capital_pago = not _sin_dato(fila.get('F. Pago Capital'))
+
         for columna, subconcepto in COLUMNAS_IMPORTE.items():
             importe = fila.get(columna)
             if importe is None or round(float(importe or 0), 2) <= 0:
+                continue
+
+            # Si la boleta registra la fecha de pago del capital, ese capital ya
+            # está pago: un VEP por él seria pagarlo dos veces. Los intereses,
+            # que es lo que se sigue debiendo, sí corresponden.
+            if columna == 'Capital' and capital_pago:
                 continue
 
             # El capital lleva el mismo número que el concepto.
