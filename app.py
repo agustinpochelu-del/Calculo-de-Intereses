@@ -572,7 +572,7 @@ def boton_descarga(df_deudas, nombre_archivo, columnas_moneda, columnas_totaliza
 # =====================================================================================
 # LENGÜETA 1: JUICIO POR CAPITAL + INTERESES (capital impositivo impago, con o sin pago posterior)
 # =====================================================================================
-def procesar_juicio_capital(origen, clave="capital"):
+def procesar_juicio_capital(origen, clave="capital", cuit=""):
     """`origen` es el Excel que se sube, o la planilla ya armada en memoria.
 
     Lo segundo es lo que usa la importación desde el mail: los datos ya están
@@ -711,14 +711,14 @@ def procesar_juicio_capital(origen, clave="capital"):
     # Los importes ya están calculados acá: no hace falta bajar la planilla y volver
     # a subirla para pagar. Va plegado porque no siempre se paga en el momento.
     with st.expander("🧾 Generar los VEPs para pagar esto"):
-        generar_veps(df_deudas, clave)
+        generar_veps(df_deudas, clave, cuit)
 
 
 # =====================================================================================
 # LENGÜETA 2: JUICIO A LOS INTERESES (el capital impositivo ya está pago; se demanda por
 # los intereses resarcitorios impagos, que pasan a ser la nueva "base" de la deuda)
 # =====================================================================================
-def procesar_juicio_intereses(origen, clave="intereses"):
+def procesar_juicio_intereses(origen, clave="intereses", cuit=""):
     """Igual que `procesar_juicio_capital`: acepta el Excel o la planilla en memoria."""
     if isinstance(origen, pd.DataFrame):
         df_deudas = origen.copy()
@@ -811,7 +811,7 @@ def procesar_juicio_intereses(origen, clave="intereses"):
         columnas_totalizar=['Capital', 'Interes_Resarcitorio', 'Interes_Punitorio', 'Total_Actualizado'])
 
     with st.expander("🧾 Generar los VEPs para pagar esto"):
-        generar_veps(df_deudas, clave)
+        generar_veps(df_deudas, clave, cuit)
 
 
 # =====================================================================================
@@ -1111,7 +1111,8 @@ def procesar_mail(archivo_subido):
         procesador = (procesar_juicio_capital if archivo == "Capital"
                       else procesar_juicio_intereses)
         try:
-            procesador(parte[columnas], clave=f"mail_{archivo}")
+            procesador(parte[columnas], clave=f"mail_{archivo}",
+                       cuit=boleta['cuit'])
         except Exception as e:
             st.error(f"No pude liquidar {etiqueta}: {e}")
 
@@ -1144,12 +1145,16 @@ def procesar_veps(archivo_subido):
     generar_veps(df, "subido")
 
 
-def generar_veps(df, clave):
+def generar_veps(df, clave, cuit=""):
     """La grilla de selección y el archivo.
 
     `clave` distingue las tres instancias que puede haber en pantalla a la vez
     (las dos liquidaciones y la pestaña de archivo), porque Streamlit necesita
     que cada control tenga un nombre propio.
+
+    `cuit` es el del contribuyente, que cuando se viene del mail ya salió de la
+    boleta. El del generador no se sugiere: quién sube el archivo a ARCA cambia
+    según el caso, así que se carga a mano.
     """
     # La liquidación trae una fila de totales al pie, que no es una obligación.
     df = df[df['Vencimiento'].notna() & df['Impuesto'].notna()].copy()
@@ -1159,8 +1164,10 @@ def generar_veps(df, clave):
     st.markdown("#### De quién es la deuda y quién paga")
     c1, c2, c3 = st.columns(3)
     cuit_contribuyente = c1.text_input(
-        "CUIT del contribuyente", key=f"vep_cuit_contrib_{clave}", placeholder="30999999995",
-        help="De quién es la deuda. Define si Ganancias va como sociedad o como persona física.")
+        "CUIT del contribuyente", value=cuit, key=f"vep_cuit_contrib_{clave}",
+        placeholder="30999999995",
+        help="De quién es la deuda. Define si Ganancias va como sociedad o como persona "
+             "física. Cuando la liquidación viene de un mail, ya sale de la boleta.")
     cuit_generador = c2.text_input(
         "CUIT del generador", key=f"vep_cuit_gen_{clave}", placeholder="20999999997",
         help="Quién sube el archivo a ARCA. Puede ser el mismo que el contribuyente.")
