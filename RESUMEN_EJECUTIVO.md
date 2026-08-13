@@ -262,6 +262,22 @@ la liquidación en vez de hasta el pago, y el importe sale de más.
 - El remitente se contrasta contra una lista de agentes fiscales conocidos, si se pasa una. No
   bloquea: el mail puede venir reenviado. Solo avisa.
 
+### Lo que pasó después del mail se carga a mano
+
+El mail es una foto del día que ARCA lo mandó. Entre esa fecha y la liquidación puede haber
+pagos, planes de facilidades o presentaciones que el estudio conoce y la boleta no. La grilla
+de «Revisá lo que leí» es editable justamente para eso:
+
+- **`F. Pago Capital`** se escribe en la grilla, venga o no en el mail. Con esa fecha los
+  punitorios cortan ahí en vez de correr hasta la liquidación, y el capital deja de generar VEP.
+- **`Int. pagos`** (casilla) marca la obligación como cancelada por completo —capital *e*
+  intereses—, que es lo que pasa cuando entra en un plan de facilidades. La fila **queda a la
+  vista pero sale de la liquidación y de los VEPs**: no se borra, para que la suma contra el
+  monto de demanda se siga entendiendo. Se muestra aparte cuántas son y por cuánto capital.
+- Con *Add row* se pueden agregar renglones que no vengan en el mail.
+
+Una fila cancelada tampoco cuenta como «sin clasificar»: el aviso de filas en `revisar` la saltea.
+
 ### Limitaciones conocidas
 
 - Lee **`.eml`** (Gmail: *⋮ → Descargar mensaje*). No lee `.msg` de Outlook, que es un formato

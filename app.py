@@ -1037,13 +1037,21 @@ def procesar_mail(archivo_subido):
         "intereses resarcitorios ya son interés. Corregila donde haga falta: las filas "
         "en «revisar» no entran en ninguna planilla hasta que las clasifiques."
     )
+    st.caption(
+        "El mail dice lo que ARCA tenía registrado el día que lo mandó. Todo lo que pasó "
+        "después lo cargás acá: **la fecha de pago del capital se escribe en la grilla**, "
+        "y si además quedaron cancelados los intereses —un plan de pagos, por ejemplo— "
+        "tildás **Int. pagos** y la fila sale de la liquidación. Con el botón de "
+        "abajo de todo también podés agregar renglones que no vengan en el mail."
+    )
 
     df['Vencimiento'] = pd.to_datetime(df['Vencimiento'], errors='coerce')
     df['F. Pago Capital'] = pd.to_datetime(df['F. Pago Capital'], errors='coerce')
+    df['Intereses pagos'] = False
 
     editado = st.data_editor(
         df[['Destino', 'Impuesto', 'concepto', 'Periodo', 'Vencimiento', 'Capital',
-            'F. Pago Capital', 'Nota', 'Aviso']],
+            'F. Pago Capital', 'Intereses pagos', 'Nota', 'Aviso']],
         use_container_width=True, hide_index=True, num_rows="dynamic", key="mail_editor",
         column_config={
             'Destino': st.column_config.SelectboxColumn(
@@ -1052,21 +1060,51 @@ def procesar_mail(archivo_subido):
                 help="capital = se deben capital e intereses · intereses = el capital "
                      "está cancelado y se deben los intereses · revisar = no va a ninguna planilla"),
             'Vencimiento': st.column_config.DateColumn("Vencimiento", format="DD/MM/YYYY"),
-            'F. Pago Capital': st.column_config.DateColumn("F. Pago Capital", format="DD/MM/YYYY"),
+            'F. Pago Capital': st.column_config.DateColumn(
+                "F. Pago Capital", format="DD/MM/YYYY",
+                help="Cuándo se pagó el capital. Escribila acá aunque no venga en el mail: "
+                     "los punitorios corren hasta ese día y no hasta la liquidación, y el "
+                     "capital deja de generar VEP."),
             'Capital': st.column_config.NumberColumn("Capital", format="%.2f"),
+            'Intereses pagos': st.column_config.CheckboxColumn(
+                "Int. pagos", width="small", default=False,
+                help="Tildalo si además del capital también quedaron cancelados los "
+                     "intereses —por ejemplo, si la obligación entró en un plan de pagos. "
+                     "La fila queda a la vista pero no se liquida ni genera VEPs."),
             'Nota': st.column_config.TextColumn("Nota del agente fiscal", width="medium", disabled=True),
             'Aviso': st.column_config.TextColumn("Por qué la marqué", width="medium", disabled=True),
         })
 
-    pendientes = int((editado['Destino'] == leer_mail.REVISAR).sum())
+    # Una obligación con capital e intereses cancelados no tiene nada que liquidar.
+    # No se borra: se muestra aparte, para que la suma de la boleta se siga entendiendo.
+    # Se cuenta antes que las pendientes: una fila cancelada no está "sin clasificar".
+    canceladas = editado['Intereses pagos'].fillna(False).astype(bool)
+
+    pendientes = int(((editado['Destino'] == leer_mail.REVISAR) & ~canceladas).sum())
     if pendientes:
         st.warning(f"{'Queda' if pendientes == 1 else 'Quedan'} **{pendientes} "
                    f"{'fila' if pendientes == 1 else 'filas'}** sin clasificar. "
                    "No van a salir en las planillas.")
 
+    if canceladas.any():
+        cuantas = int(canceladas.sum())
+        una = cuantas == 1
+        st.info(
+            f"**{cuantas} {'obligación cancelada' if una else 'obligaciones canceladas'}** "
+            f"por {formato_arg(round(editado.loc[canceladas, 'Capital'].sum(), 2))} de capital. "
+            f"{'Queda' if una else 'Quedan'} fuera de la liquidación y de los VEPs."
+        )
+        sin_fecha = int((canceladas & editado['F. Pago Capital'].isna()).sum())
+        if sin_fecha:
+            st.caption(
+                f"⚠️ {'Esa fila no tiene' if sin_fecha == 1 else f'{sin_fecha} de esas filas no tienen'} "
+                "cargada la fecha de pago del capital. Para el cálculo no cambia nada "
+                "—queda afuera igual— pero conviene escribirla: es lo que después dice cuándo se canceló."
+            )
+
     # --- Liquidar ---
     st.markdown("#### Liquidá")
-    listo = editado.copy()
+    listo = editado[~canceladas].copy()
     listo['fecha_Demanda'] = pd.Timestamp(fecha_demanda)
     listo['Fecha_Liquidacion'] = pd.Timestamp(fecha_liquidacion)
 
