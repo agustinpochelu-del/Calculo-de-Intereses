@@ -19,8 +19,10 @@ FUENTE = "Arial"
 
 COLUMNAS_CAPITAL = ['Impuesto', 'concepto', 'Periodo', 'Vencimiento', 'Capital',
                     'F. Pago Capital', 'fecha_Demanda', 'Fecha_Liquidacion']
+# 'F. Pago Capital' también va acá: la base de un juicio a los intereses se puede
+# pagar, y la boleta lo registra. Sin esa fecha los punitorios corren de más.
 COLUMNAS_INTERESES = ['Impuesto', 'concepto', 'Periodo', 'Vencimiento', 'Capital',
-                      'fecha_Demanda', 'Fecha_Liquidacion']
+                      'F. Pago Capital', 'fecha_Demanda', 'Fecha_Liquidacion']
 
 
 def estilo_header(ws, fila, columnas):

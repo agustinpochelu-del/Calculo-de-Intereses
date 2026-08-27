@@ -118,6 +118,45 @@ check("punitorios", pun, 23060.10, tol=0.01)
 check("días punitorios", dias_pun, 54)
 
 # =====================================================================================
+# Un juicio a los intereses donde la base también se pagó. Los dos casos salen del
+# calculador de ARCA, con "Fecha de Pago del Capital" cargada: son filas cuyo
+# subconcepto en la boleta es INTERESES RESARCITORIOS y que además figuran en "Pagos
+# de Capital Registrados". Antes esta pantalla ignoraba el pago y los punitorios
+# corrían hasta la liquidación: daban de más.
+print("\n5 bis) Juicio a los intereses con la base ya paga")
+DEMANDA, PAGO, LIQUIDACION = F('2026-03-13'), F('2026-06-17'), F('2026-08-27')
+CASOS = [  # base, vencimiento, resarcitorios, punitorios, capitalizables, total de días
+    (110439.04, '2024-08-22', 90960.53, 12111.48, 5836.63, 726),
+    (10867.82, '2025-05-22', 3071.07, 1191.84, 197.06, 455),
+]
+for base, venc, res_arca, pun_arca, cap_arca, dias_total in CASOS:
+    fila = pd.Series({
+        'Vencimiento': F(venc), 'F. Pago Capital': PAGO, 'fecha_Demanda': DEMANDA,
+        'Fecha_Liquidacion': LIQUIDACION, 'Capital': base,
+    })
+    t = app.calcular_tramos(fila, RES, PUN)
+    check(f"resarcitorios base {base}", t['Interes_Resarcitorio'], res_arca, tol=0.01)
+    check(f"punitorios base {base}", t['Interes_Punitorio'], pun_arca, tol=0.01)
+    check(f"capitalizables base {base}", t['Interes_Capitalizable'], cap_arca, tol=0.01)
+    check(f"total de días base {base}",
+          t['Dias_Resarcitorios'] + t['Dias_Punitorios'] + t['Dias_Capitalizables'],
+          dias_total)
+
+# Sin fecha de pago el motor tiene que dar exactamente los dos tramos de siempre:
+# resarcitorios hasta la demanda, punitorios hasta la liquidación, sin capitalizables.
+# Es lo que garantiza que agregar la columna no movió ninguna liquidación vieja.
+sin_pago = pd.Series({
+    'Vencimiento': F('2024-08-22'), 'F. Pago Capital': pd.NaT, 'fecha_Demanda': DEMANDA,
+    'Fecha_Liquidacion': LIQUIDACION, 'Capital': 110439.04,
+})
+t = app.calcular_tramos(sin_pago, RES, PUN)
+res_dos, _ = app.calcular_interes(F('2024-08-22'), DEMANDA, 110439.04, RES)
+pun_dos, _ = app.calcular_interes(DEMANDA, LIQUIDACION, 110439.04, PUN)
+check("sin pago: resarcitorios igual que la fórmula de dos tramos", t['Interes_Resarcitorio'], res_dos)
+check("sin pago: punitorios igual que la fórmula de dos tramos", t['Interes_Punitorio'], pun_dos)
+check("sin pago: sin capitalizables", t['Interes_Capitalizable'], 0.0)
+
+# =====================================================================================
 print("\n6) La tabla oficial de tasas.json está completa y sin huecos")
 # cargar_tasas() revienta si los tramos no empalman, así que llegar hasta acá ya es
 # parte de la prueba.

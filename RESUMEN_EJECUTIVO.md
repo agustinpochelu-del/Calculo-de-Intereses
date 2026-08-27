@@ -100,14 +100,18 @@ cargar_tasas()                    # lee tasas.json, arma las dos tablas y verifi
 validar_deudas()                  # chequea la hoja Deudas y devuelve problemas concretos
 avisar_tramos_sin_dias()          # avisa si hubo que usar un tramo completo sin los
                                   # días oficiales de ARCA
+calcular_tramos()                 # los tres tramos de una fila (Caso A / B / sin pago, ver
+                                  # punto 5). Lo usan LAS DOS lengüetas de liquidación:
+                                  # un solo motor, un solo lugar donde validarlo.
 
 mostrar_tabla_tasas()             # UI: cuadro de tasas de referencia al pie de cada resultado
 boton_descarga()                  # UI: arma el Excel liquidado (openpyxl) con fila de totales
 
-procesar_juicio_capital()         # Lengüeta 1: lee Excel, corre el motor Caso A/B (ver punto 5),
-                                  # arma el dashboard, tabla detalle y descarga.
-procesar_juicio_intereses()       # Lengüeta 2: motor simple de 2 tramos (Resarcitorios + Punitorios)
-                                  # aplicado sobre la columna Capital (que ya es un monto de intereses).
+procesar_juicio_capital()         # Lengüeta 1: lee Excel, corre calcular_tramos, arma el
+                                  # dashboard, tabla detalle y descarga.
+procesar_juicio_intereses()       # Lengüeta 2: el MISMO motor, sobre una columna Capital que ya
+                                  # es un monto de intereses. Cambia qué se muestra y a qué
+                                  # subconcepto se imputa el VEP, no el cálculo.
 
 _estilo_header(), _fila_ejemplo(),
 _ajustar_anchos(), _nota(),
@@ -197,8 +201,15 @@ El orden de Punitorios y Capitalizables **se invierte** según cuál evento ocur
 El Caso A quedó confirmado contra un detalle de ARCA con capitalizables (venc 13/01/2026, demanda
 13/03/2026, pago capital 13/05/2026, pago intereses 12/08/2026).
 
-La Lengüeta 2 usa siempre el caso "sin pago": `Resarcitorios: V→D`, `Punitorios: D→L`, sobre la
-columna `Capital` (que en ese formato ya es un monto de intereses).
+**La Lengüeta 2 usa exactamente el mismo motor** (`calcular_tramos`). Durante un tiempo usó una
+fórmula propia de dos tramos, con el supuesto de que la base de un juicio a los intereses no se
+podía pagar. Sí se puede: la boleta lo registra en «Pagos de Capital Registrados», y sin esa fecha
+los punitorios corren hasta la liquidación y el importe **sale de más**. Confirmado contra el
+calculador de ARCA: en una fila real de 110.439,04 la diferencia era de 3.182,56.
+
+Lo único que cambia entre las dos lengüetas es **qué representa la columna `Capital`**: capital
+impositivo en la 1, intereses resarcitorios ya devengados en la 2. Eso no cambia el cálculo de los
+tramos —ARCA los calcula igual— pero sí cambia a qué subconcepto se imputa cada VEP (ver 6 ter).
 
 ## 6. Formato de datos esperado
 
@@ -333,14 +344,25 @@ Detalles que importan: los códigos van **sin ceros a la izquierda** (`concepto=
 
 ### De la liquidación a los VEPs
 
-Cada fila da hasta cuatro VEPs, y lo que los distingue es el subconcepto:
+Cada fila da hasta cuatro VEPs, y lo que los distingue es el subconcepto. **Cuál corresponde
+depende de qué es la base del juicio**, porque el subconcepto dice a qué se imputa el pago:
 
-| Columna de la liquidación | subConcepto |
-|---|---|
-| `Capital` | el mismo número que el concepto (19 DDJJ / 191 Anticipo) |
-| `Interes_Resarcitorio` | 51 |
-| `Interes_Capitalizable` | 52 |
-| `Interes_Punitorio` | 94 |
+| Columna de la liquidación | Juicio por Capital + Intereses | Juicio a los Intereses |
+|---|---|---|
+| `Capital` | el número del concepto (19 DDJJ / 191 Anticipo) | **51** — la base ya *es* interés resarcitorio |
+| `Interes_Resarcitorio` | 51 | **52** — interés sobre intereses es capitalizable |
+| `Interes_Capitalizable` | 52 | 52 |
+| `Interes_Punitorio` | 94 | 94 — un punitorio es punitorio en los dos casos |
+
+En el juicio a los intereses la columna `Capital` no es capital impositivo: la boleta trae esas
+filas con subconcepto INTERESES RESARCITORIOS. Por eso todo corre un escalón. Lo elige
+`veps.preparar(..., base_es_interes=True)`, que la Lengüeta 2 pasa sola; la pestaña de VEPs por
+archivo **lo pregunta**, porque mirando el Excel no se puede saber de qué juicio salió.
+
+Consecuencia: en una fila del juicio a los intereses cuya base está paga, dos importes distintos
+(`Interes_Resarcitorio` y `Interes_Capitalizable`) caen en el subconcepto 52. Salen como **dos VEPs
+separados, no sumados**, y la pantalla lo avisa. Si ARCA los quiere en uno solo, hay que decidirlo
+y cambiarlo: no se deduce.
 
 Los anticipos llevan el período con el **mes en 00** (`202600`) y el número de cuota en
 `anticipoCuota`. El resto lleva su mes.

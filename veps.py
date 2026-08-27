@@ -54,6 +54,18 @@ COLUMNAS_IMPORTE = {
     'Interes_Punitorio': SUBCONCEPTO_PUNITORIO,
 }
 
+# En un juicio a los intereses el importe base no es capital impositivo: la boleta lo
+# trae con subconcepto INTERESES RESARCITORIOS. Entonces todo corre un escalón. La base
+# se paga como resarcitorio, y lo que el motor llama resarcitorios —interés devengado
+# sobre esa base— es interés sobre intereses, o sea capitalizable. Los punitorios son
+# punitorios en los dos casos: no dependen de qué sea la base.
+COLUMNAS_IMPORTE_BASE_INTERES = {
+    'Capital': SUBCONCEPTO_RESARCITORIO,
+    'Interes_Resarcitorio': SUBCONCEPTO_CAPITALIZABLE,
+    'Interes_Capitalizable': SUBCONCEPTO_CAPITALIZABLE,
+    'Interes_Punitorio': SUBCONCEPTO_PUNITORIO,
+}
+
 # --- Conceptos ---
 CONCEPTO_DDJJ = 19
 CONCEPTO_ANTICIPO = 191
@@ -289,16 +301,21 @@ def nombre_archivo(cuit_generador, fecha=None):
 
 # ── De la liquidación a la lista de pagos ──────────────────────────────────
 
-def preparar(filas, cuit_contribuyente):
+def preparar(filas, cuit_contribuyente, base_es_interes=False):
     """Convierte las filas de una liquidación en candidatos a VEP.
 
-    Una fila de la liquidación puede dar hasta cuatro VEPs: capital,
-    resarcitorios, capitalizables y punitorios. Devuelve uno por importe con
-    algo para pagar, cada uno con su aviso si algo no se pudo resolver.
+    Una fila de la liquidación puede dar hasta cuatro VEPs: la base y los tres
+    intereses. Devuelve uno por importe con algo para pagar, cada uno con su
+    aviso si algo no se pudo resolver.
+
+    `base_es_interes` es True cuando viene de un juicio a los intereses: ahí la
+    columna 'Capital' son intereses resarcitorios, no capital impositivo, y los
+    subconceptos corren un escalón (ver COLUMNAS_IMPORTE_BASE_INTERES).
 
     No decide qué se paga: eso lo elige Agustín tildando en pantalla.
     """
     tabla, _, _ = cargar_conceptos()
+    columnas = COLUMNAS_IMPORTE_BASE_INTERES if base_es_interes else COLUMNAS_IMPORTE
     candidatos = []
 
     for i, fila in enumerate(filas):
@@ -309,18 +326,19 @@ def preparar(filas, cuit_contribuyente):
 
         capital_pago = not _sin_dato(fila.get('F. Pago Capital'))
 
-        for columna, subconcepto in COLUMNAS_IMPORTE.items():
+        for columna, subconcepto in columnas.items():
             importe = fila.get(columna)
             if importe is None or round(float(importe or 0), 2) <= 0:
                 continue
 
-            # Si la boleta registra la fecha de pago del capital, ese capital ya
-            # está pago: un VEP por él seria pagarlo dos veces. Los intereses,
-            # que es lo que se sigue debiendo, sí corresponden.
+            # Si la boleta registra la fecha de pago, ese importe base ya está
+            # pago: un VEP por él sería pagarlo dos veces. Los intereses, que es
+            # lo que se sigue debiendo, sí corresponden.
             if columna == 'Capital' and capital_pago:
                 continue
 
-            # El capital lleva el mismo número que el concepto.
+            # El capital impositivo lleva el mismo número que el concepto. En un
+            # juicio a los intereses la base ya tiene el suyo (resarcitorio).
             sub = subconcepto if subconcepto is not None else concepto
 
             avisos = [a for a in (aviso_imp, aviso_con, aviso_per) if a]

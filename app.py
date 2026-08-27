@@ -1,4 +1,5 @@
 import streamlit as st
+from collections import Counter
 import pandas as pd
 from io import BytesIO
 import datetime
@@ -409,6 +410,55 @@ def avisar_tramos_sin_dias(avisos):
             "a ARCA un detalle de cálculo que atraviese esos tramos y pasame el número.")
 
 
+# --- Los tres tramos de una obligación ------------------------------------------------
+# Es el corazón del cálculo y lo usan las dos pantallas. La diferencia entre ellas no
+# está acá: está en qué representa el importe base. En el juicio por capital es capital
+# impositivo; en el juicio a los intereses, intereses que quedaron impagos y pasaron a
+# ser la base. Los tramos se calculan igual en los dos casos, y ARCA los calcula igual.
+#
+# Los tramos son continuos, sin salto de un día entre uno y el siguiente. El orden de
+# Punitorios y Capitalizables se invierte según cuál de los dos eventos (Demanda o Pago)
+# ocurre primero:
+#
+#   Caso A: Demanda ANTES del Pago
+#       Resarcitorios:  Vencimiento -> Demanda        (sobre el importe base)
+#       Punitorios:     Demanda -> Pago               (sobre el importe base)
+#       Capitalizables: Pago -> Liquidación           (sobre el monto de Resarcitorios)
+#
+#   Caso B: Pago ANTES de la Demanda
+#       Resarcitorios:  Vencimiento -> Pago           (sobre el importe base)
+#       Capitalizables: Pago -> Demanda               (sobre el monto de Resarcitorios)
+#       Punitorios:     Demanda -> Liquidación        (sobre el importe base)
+#
+#   Sin fecha de pago: Resarcitorios hasta la Demanda, Punitorios desde la Demanda hasta
+#   la Liquidación, sin Capitalizables.
+def calcular_tramos(fila, df_tasas_res, df_tasas_pun, avisos=None):
+    """Devuelve los tres intereses y sus días para una fila de deuda."""
+    vencimiento = fila['Vencimiento']
+    pago = fila.get('F. Pago Capital')
+    fecha_demanda = fila['fecha_Demanda']
+    fecha_liq = fila['Fecha_Liquidacion']
+    base = fila['Capital']
+
+    if pago is None or pd.isna(pago):
+        resarcitorio, dias_res = calcular_interes(vencimiento, fecha_demanda, base, df_tasas_res, avisos)
+        capitalizable, dias_cap = 0.0, 0
+        punitorio, dias_pun = calcular_interes(fecha_demanda, fecha_liq, base, df_tasas_pun, avisos)
+    elif fecha_demanda <= pago:
+        resarcitorio, dias_res = calcular_interes(vencimiento, fecha_demanda, base, df_tasas_res, avisos)
+        punitorio, dias_pun = calcular_interes(fecha_demanda, pago, base, df_tasas_pun, avisos)
+        capitalizable, dias_cap = calcular_interes(pago, fecha_liq, resarcitorio, df_tasas_res, avisos)
+    else:
+        resarcitorio, dias_res = calcular_interes(vencimiento, pago, base, df_tasas_res, avisos)
+        capitalizable, dias_cap = calcular_interes(pago, fecha_demanda, resarcitorio, df_tasas_res, avisos)
+        punitorio, dias_pun = calcular_interes(fecha_demanda, fecha_liq, base, df_tasas_pun, avisos)
+
+    return pd.Series({
+        'Interes_Resarcitorio': resarcitorio, 'Dias_Resarcitorios': dias_res,
+        'Interes_Capitalizable': capitalizable, 'Dias_Capitalizables': dias_cap,
+        'Interes_Punitorio': punitorio, 'Dias_Punitorios': dias_pun,
+    })
+
 # =====================================================================================
 # VALIDACIONES DE LA HOJA "Deudas"
 # =====================================================================================
@@ -608,51 +658,12 @@ def procesar_juicio_capital(origen, clave="capital", cuit=""):
     ultima_fecha_demanda = df_deudas['fecha_Demanda'].max()
     ultima_fecha_liq = df_deudas['Fecha_Liquidacion'].max()
 
-    # Los tres tramos son continuos, sin salto de un día entre uno y el siguiente.
-    # El orden de Punitorios y Capitalizables se invierte según cuál de los dos
-    # eventos (Demanda o Pago del Capital) ocurre primero:
-    #
-    #   Caso A: Demanda ANTES del Pago del Capital
-    #       Resarcitorios:  Vencimiento -> Demanda            (sobre Capital)
-    #       Punitorios:     Demanda -> Pago Capital            (sobre Capital)
-    #       Capitalizables: Pago Capital -> Liquidación         (sobre monto Resarcitorios)
-    #
-    #   Caso B: Pago del Capital ANTES de la Demanda
-    #       Resarcitorios:  Vencimiento -> Pago Capital        (sobre Capital)
-    #       Capitalizables: Pago Capital -> Demanda            (sobre monto Resarcitorios)
-    #       Punitorios:     Demanda -> Liquidación              (sobre Capital)
-    #
-    #   Sin fecha de Pago de Capital cargada: Resarcitorios hasta la Demanda,
-    #   Punitorios desde la Demanda hasta la Liquidación, sin Capitalizables.
+    # Los tres tramos los calcula `calcular_tramos`, que es el mismo motor que usa la
+    # pantalla de juicio a los intereses. Ahí está explicado cómo se ordenan.
     avisos = set()
 
-    def procesar_fila(fila):
-        vencimiento = fila['Vencimiento']
-        pago_capital = fila['F. Pago Capital']
-        fecha_demanda = fila['fecha_Demanda']
-        fecha_liq = fila['Fecha_Liquidacion']
-        capital = fila['Capital']
-
-        if pd.isna(pago_capital):
-            resarcitorio, dias_res = calcular_interes(vencimiento, fecha_demanda, capital, df_tasas_res, avisos)
-            capitalizable, dias_cap = 0.0, 0
-            punitorio, dias_pun = calcular_interes(fecha_demanda, fecha_liq, capital, df_tasas_pun, avisos)
-        elif fecha_demanda <= pago_capital:
-            resarcitorio, dias_res = calcular_interes(vencimiento, fecha_demanda, capital, df_tasas_res, avisos)
-            punitorio, dias_pun = calcular_interes(fecha_demanda, pago_capital, capital, df_tasas_pun, avisos)
-            capitalizable, dias_cap = calcular_interes(pago_capital, fecha_liq, resarcitorio, df_tasas_res, avisos)
-        else:
-            resarcitorio, dias_res = calcular_interes(vencimiento, pago_capital, capital, df_tasas_res, avisos)
-            capitalizable, dias_cap = calcular_interes(pago_capital, fecha_demanda, resarcitorio, df_tasas_res, avisos)
-            punitorio, dias_pun = calcular_interes(fecha_demanda, fecha_liq, capital, df_tasas_pun, avisos)
-
-        return pd.Series({
-            'Interes_Resarcitorio': resarcitorio, 'Dias_Resarcitorios': dias_res,
-            'Interes_Capitalizable': capitalizable, 'Dias_Capitalizables': dias_cap,
-            'Interes_Punitorio': punitorio, 'Dias_Punitorios': dias_pun,
-        })
-
-    df_deudas = df_deudas.join(df_deudas.apply(procesar_fila, axis=1))
+    df_deudas = df_deudas.join(df_deudas.apply(
+        calcular_tramos, axis=1, args=(df_tasas_res, df_tasas_pun, avisos)))
     for col in ['Dias_Resarcitorios', 'Dias_Capitalizables', 'Dias_Punitorios']:
         df_deudas[col] = df_deudas[col].astype(int)
 
@@ -730,7 +741,12 @@ def procesar_juicio_intereses(origen, clave="intereses", cuit=""):
     df_deudas.columns = df_deudas.columns.str.strip()
     df_deudas = df_deudas.dropna(subset=['Vencimiento'])
 
+    # La planilla vieja de esta pantalla no traía la columna: se asume sin pagar.
+    if 'F. Pago Capital' not in df_deudas.columns:
+        df_deudas['F. Pago Capital'] = pd.NaT
+
     df_deudas['Vencimiento'] = pd.to_datetime(df_deudas['Vencimiento'])
+    df_deudas['F. Pago Capital'] = pd.to_datetime(df_deudas['F. Pago Capital'])
     df_deudas['fecha_Demanda'] = pd.to_datetime(df_deudas['fecha_Demanda'])
     df_deudas['Fecha_Liquidacion'] = pd.to_datetime(df_deudas['Fecha_Liquidacion'])
 
@@ -745,32 +761,32 @@ def procesar_juicio_intereses(origen, clave="intereses", cuit=""):
     ultima_fecha_demanda = df_deudas['fecha_Demanda'].max()
     ultima_fecha_liq = df_deudas['Fecha_Liquidacion'].max()
 
-    # Acá "Capital" ya es el monto de intereses que se convirtió en la base del juicio
-    # (el capital impositivo original está pago, no interviene). Solo hay dos tramos,
-    # continuos, sin salto de un día entre uno y el siguiente:
-    #   Resarcitorios: Vencimiento -> Demanda   (sobre ese monto base)
-    #   Punitorios:    Demanda -> Liquidación   (sobre ese monto base)
+    # Acá "Capital" ya es el monto de intereses que se convirtió en la base del juicio:
+    # el capital impositivo original no interviene. Pero esa base también se puede pagar,
+    # y la boleta lo registra en "Pagos de Capital Registrados". Si eso pasó, los
+    # punitorios cortan el día del pago y desde ahí corren capitalizables sobre los
+    # resarcitorios, igual que en el juicio por capital. Sin fecha de pago quedan los
+    # dos tramos de siempre: Resarcitorios hasta la Demanda y Punitorios hasta la
+    # Liquidación. Es el mismo motor, en `calcular_tramos`.
     avisos = set()
 
-    def procesar_fila(fila):
-        resarcitorio, dias_res = calcular_interes(fila['Vencimiento'], fila['fecha_Demanda'], fila['Capital'], df_tasas_res, avisos)
-        punitorio, dias_pun = calcular_interes(fila['fecha_Demanda'], fila['Fecha_Liquidacion'], fila['Capital'], df_tasas_pun, avisos)
-        return pd.Series({
-            'Interes_Resarcitorio': resarcitorio, 'Dias_Resarcitorios': dias_res,
-            'Interes_Punitorio': punitorio, 'Dias_Punitorios': dias_pun,
-        })
-
-    df_deudas = df_deudas.join(df_deudas.apply(procesar_fila, axis=1))
-    for col in ['Dias_Resarcitorios', 'Dias_Punitorios']:
+    df_deudas = df_deudas.join(df_deudas.apply(
+        calcular_tramos, axis=1, args=(df_tasas_res, df_tasas_pun, avisos)))
+    for col in ['Dias_Resarcitorios', 'Dias_Capitalizables', 'Dias_Punitorios']:
         df_deudas[col] = df_deudas[col].astype(int)
 
     fecha_inicio_punitorios_global = ultima_fecha_demanda
     antiguedad_juicio = max(0, (ultima_fecha_liq - fecha_inicio_punitorios_global).days)
 
-    df_deudas['Total_Actualizado'] = df_deudas['Capital'] + df_deudas['Interes_Resarcitorio'] + df_deudas['Interes_Punitorio']
+    df_deudas['Total_Actualizado'] = (
+        df_deudas['Capital'] + df_deudas['Interes_Resarcitorio']
+        + df_deudas['Interes_Capitalizable'] + df_deudas['Interes_Punitorio']
+    )
 
     df_deudas_fmt = df_deudas.copy()
     df_deudas_fmt['Vencimiento'] = df_deudas_fmt['Vencimiento'].dt.strftime('%d/%m/%Y')
+    df_deudas_fmt['F. Pago Capital'] = df_deudas_fmt['F. Pago Capital'].apply(
+        lambda d: d.strftime('%d/%m/%Y') if pd.notna(d) else '')
     df_deudas_fmt['fecha_Demanda'] = df_deudas_fmt['fecha_Demanda'].dt.strftime('%d/%m/%Y')
     df_deudas_fmt['Fecha_Liquidacion'] = df_deudas_fmt['Fecha_Liquidacion'].dt.strftime('%d/%m/%Y')
 
@@ -778,20 +794,31 @@ def procesar_juicio_intereses(origen, clave="intereses", cuit=""):
     avisar_tramos_sin_dias(avisos)
     st.markdown("### 📋 Resumen del Juicio (a los Intereses)")
 
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4 = st.columns(4)
     with col1: st.metric("Intereses (Base del Juicio)", formato_arg(df_deudas['Capital'].sum()))
     with col2: st.metric("Resarcitorios", formato_arg(df_deudas['Interes_Resarcitorio'].sum()))
-    with col3: st.metric("Punitorios", formato_arg(df_deudas['Interes_Punitorio'].sum()))
+    with col3: st.metric("Capitalizables", formato_arg(df_deudas['Interes_Capitalizable'].sum()))
+    with col4: st.metric("Punitorios", formato_arg(df_deudas['Interes_Punitorio'].sum()))
 
-    col4, col5 = st.columns(2)
-    with col4: st.metric("Total Actualizado", formato_arg(df_deudas['Total_Actualizado'].sum()))
-    with col5: st.metric("Antigüedad Juicio", f"{antiguedad_juicio} días")
+    col5, col6 = st.columns(2)
+    with col5: st.metric("Total Actualizado", formato_arg(df_deudas['Total_Actualizado'].sum()))
+    with col6: st.metric("Antigüedad Juicio", f"{antiguedad_juicio} días")
+
+    pagadas = int(df_deudas['F. Pago Capital'].notna().sum())
+    if pagadas:
+        st.caption(
+            f"💡 {'Una de las bases está paga' if pagadas == 1 else f'{pagadas} de las bases están pagas'} "
+            "según la boleta: para esas filas los punitorios cortan el día del pago y desde ahí "
+            "corren capitalizables sobre los resarcitorios. Sin ese dato el importe sale de más."
+        )
 
     st.divider()
 
     columnas_detalle = ['Impuesto', 'concepto', 'Periodo', 'Vencimiento', 'Capital',
-                        'fecha_Demanda', 'Dias_Resarcitorios', 'Interes_Resarcitorio',
-                        'Dias_Punitorios', 'Interes_Punitorio',
+                        'F. Pago Capital',
+                        'Dias_Resarcitorios', 'Interes_Resarcitorio',
+                        'Dias_Capitalizables', 'Interes_Capitalizable',
+                        'fecha_Demanda', 'Dias_Punitorios', 'Interes_Punitorio',
                         'Fecha_Liquidacion', 'Total_Actualizado']
     columnas_detalle = [c for c in columnas_detalle if c in df_deudas_fmt.columns]
 
@@ -807,11 +834,13 @@ def procesar_juicio_intereses(origen, clave="intereses", cuit=""):
 
     boton_descarga(
         df_deudas_fmt[columnas_detalle], "Liquidacion_ARCA_Intereses.xlsx", clave=clave,
-        columnas_moneda=['Capital', 'Interes_Resarcitorio', 'Interes_Punitorio', 'Total_Actualizado'],
-        columnas_totalizar=['Capital', 'Interes_Resarcitorio', 'Interes_Punitorio', 'Total_Actualizado'])
+        columnas_moneda=['Capital', 'Interes_Resarcitorio', 'Interes_Capitalizable',
+                         'Interes_Punitorio', 'Total_Actualizado'],
+        columnas_totalizar=['Capital', 'Interes_Resarcitorio', 'Interes_Capitalizable',
+                            'Interes_Punitorio', 'Total_Actualizado'])
 
     with st.expander("🧾 Generar los VEPs para pagar esto"):
-        generar_veps(df_deudas, clave, cuit)
+        generar_veps(df_deudas, clave, cuit, base_es_interes=True)
 
 
 # =====================================================================================
@@ -906,7 +935,7 @@ def generar_plantilla_intereses():
     _hoja_instrucciones(wb, "Plantilla - Juicio a los Intereses", [
         "Usá esta planilla cuando el capital impositivo original YA fue pagado, y el juicio se inicia",
         "por los intereses resarcitorios que quedaron impagos (esos intereses pasan a ser la nueva",
-        "'base' de la deuda). No incluye columna de pago de capital porque no aplica en este caso.",
+        "'base' de la deuda).",
         "",
         "Columnas de 'Deudas':",
         "  • Impuesto: nombre del impuesto (ej: IMPUESTO A LAS GANANCIAS, IVA, etc.)",
@@ -914,6 +943,10 @@ def generar_plantilla_intereses():
         "  • Periodo: período fiscal de origen (ej: 2025-1)",
         "  • Vencimiento: fecha desde la que corren los intereses sobre este monto (vencimiento de origen)",
         "  • Capital: monto de intereses adeudados que se convierte en la base de este juicio",
+        "  • F. Pago Capital: fecha en que se pagó ESA base (figura en 'Pagos de Capital Registrados',",
+        "    abajo de todo en el mail del agente fiscal). DEJAR VACÍO si todavía no se pagó.",
+        "    Con esa fecha los punitorios cortan ahí y desde ahí corren capitalizables sobre los",
+        "    resarcitorios. Sin ella los punitorios corren hasta la liquidación y el importe sale de más.",
         "  • fecha_Demanda: fecha de inicio de la demanda de ejecución fiscal",
         "  • Fecha_Liquidacion: fecha a la que querés calcular la liquidación (fecha de pago de intereses)",
         "",
@@ -928,14 +961,14 @@ def generar_plantilla_intereses():
     ])
 
     ws = wb.create_sheet("Deudas")
-    _estilo_header(ws, 1, ["Impuesto", "concepto", "Periodo", "Vencimiento", "Capital", "fecha_Demanda", "Fecha_Liquidacion"])
+    _estilo_header(ws, 1, ["Impuesto", "concepto", "Periodo", "Vencimiento", "Capital", "F. Pago Capital", "fecha_Demanda", "Fecha_Liquidacion"])
     _fila_ejemplo(ws, 2,
                   ["IMPUESTO A LAS GANANCIAS", "INTERESES Capitalizables", "2025-1",
-                   datetime.date(2025, 6, 17), 3837980.63,
+                   datetime.date(2025, 6, 17), 3837980.63, None,
                    datetime.date(2026, 3, 13), datetime.date(2026, 7, 30)],
-                  formatos=[None, None, None, "DD/MM/YYYY", "#,##0.00", "DD/MM/YYYY", "DD/MM/YYYY"])
-    _ajustar_anchos(ws, [26, 24, 12, 14, 16, 14, 16])
-    _nota(ws, 3, "A3:G3", "↑ Fila de ejemplo: borrala y cargá tus propias obligaciones (podés agregar tantas filas como necesites).")
+                  formatos=[None, None, None, "DD/MM/YYYY", "#,##0.00", "DD/MM/YYYY", "DD/MM/YYYY", "DD/MM/YYYY"])
+    _ajustar_anchos(ws, [26, 24, 12, 14, 16, 16, 14, 16])
+    _nota(ws, 3, "A3:H3", "↑ Fila de ejemplo: borrala y cargá tus propias obligaciones (podés agregar tantas filas como necesites).")
 
     buffer = BytesIO()
     wb.save(buffer)
@@ -1172,6 +1205,17 @@ NOMBRE_DE_COLUMNA = {
     'Interes_Punitorio': 'Punitorios',
 }
 
+# En un juicio a los intereses la base ya son intereses resarcitorios, así que se paga
+# como tal, y lo que el motor llama resarcitorios se paga como capitalizable. Estos
+# nombres dicen con qué subconcepto sale cada VEP, no cómo se llama el tramo en el
+# cálculo: lo que importa al elegir es a qué se va a imputar el pago.
+NOMBRE_DE_COLUMNA_BASE_INTERES = {
+    'Capital': 'Resarcitorios (la base)',
+    'Interes_Resarcitorio': 'Capitalizables',
+    'Interes_Capitalizable': 'Capitalizables (desde el pago)',
+    'Interes_Punitorio': 'Punitorios',
+}
+
 
 def _fecha_de(valor):
     """La liquidación baja las fechas como texto 'DD/MM/AAAA'."""
@@ -1190,10 +1234,21 @@ def procesar_veps(archivo_subido):
         raise ValueError(
             "El archivo no tiene la columna 'Vencimiento'. ¿Es una liquidación bajada "
             "de las otras pestañas?")
-    generar_veps(df, "subido")
+
+    # De qué juicio salió el archivo no se puede deducir mirándolo, y de eso depende
+    # a qué subconcepto se imputa cada importe. Así que se pregunta.
+    tipo = st.radio(
+        "¿De qué liquidación es este archivo?",
+        ["Juicio por Capital + Intereses", "Juicio a los Intereses"],
+        key="vep_tipo_juicio", horizontal=True,
+        help="En el juicio a los intereses la columna 'Capital' no es capital "
+             "impositivo: son intereses resarcitorios. Por eso se paga como "
+             "resarcitorio, y lo que la liquidación llama resarcitorios se paga "
+             "como capitalizable.")
+    generar_veps(df, "subido", base_es_interes=(tipo == "Juicio a los Intereses"))
 
 
-def generar_veps(df, clave, cuit=""):
+def generar_veps(df, clave, cuit="", base_es_interes=False):
     """La grilla de selección y el archivo.
 
     `clave` distingue las tres instancias que puede haber en pantalla a la vez
@@ -1203,7 +1258,14 @@ def generar_veps(df, clave, cuit=""):
     `cuit` es el del contribuyente, que cuando se viene del mail ya salió de la
     boleta. El del generador no se sugiere: quién sube el archivo a ARCA cambia
     según el caso, así que se carga a mano.
+
+    `base_es_interes` viene en True desde el juicio a los intereses: ahí la columna
+    'Capital' son intereses resarcitorios, y eso cambia a qué subconcepto se imputa
+    cada importe.
     """
+    nombres = NOMBRE_DE_COLUMNA_BASE_INTERES if base_es_interes else NOMBRE_DE_COLUMNA
+    palabra_base = 'las bases' if base_es_interes else 'los capitales'
+
     # La liquidación trae una fila de totales al pie, que no es una obligación.
     df = df[df['Vencimiento'].notna() & df['Impuesto'].notna()].copy()
     if df.empty:
@@ -1242,7 +1304,7 @@ def generar_veps(df, clave, cuit=""):
     filas = df.to_dict('records')
     for fila in filas:
         fila['Vencimiento'] = _fecha_de(fila.get('Vencimiento'))
-    candidatos = veps.preparar(filas, cuit_contribuyente)
+    candidatos = veps.preparar(filas, cuit_contribuyente, base_es_interes)
 
     if not candidatos:
         st.warning("No hay ningún importe mayor a cero para pagar.")
@@ -1251,20 +1313,33 @@ def generar_veps(df, clave, cuit=""):
     # --- La grilla: un renglón por importe, todo destildado ---
     st.markdown("#### Elegí qué vas a pagar")
 
-    # Los capitales ya pagos no aparecen: sería pagarlos dos veces. Se dice, para
-    # que no parezca que se perdieron.
+    # Los importes base ya pagos no aparecen: sería pagarlos dos veces. Se dice,
+    # para que no parezca que se perdieron.
     if 'F. Pago Capital' in df.columns:
         pagos = int(df['F. Pago Capital'].notna().sum())
         if pagos:
             st.caption(
-                f"No están los capitales de **{pagos} "
+                f"No están {palabra_base} de **{pagos} "
                 f"{'obligación' if pagos == 1 else 'obligaciones'}** que la boleta "
                 "registra como pagas: de esas solo se deben los intereses.")
 
+    # Dos importes de la misma obligación pueden caer en el mismo subconcepto: pasa
+    # en el juicio a los intereses, donde los resarcitorios del cálculo y los
+    # capitalizables posteriores al pago se imputan los dos como capitalizables.
+    # Salen como dos VEPs distintos, que es lo literal. No los sumo por mi cuenta:
+    # si van juntos, es una decisión de Agustín, no una deducción mía.
+    repetidos = Counter((c['fila'], c['subconcepto']) for c in candidatos)
+    juntos = sum(1 for veces in repetidos.values() if veces > 1)
+    if juntos:
+        st.caption(
+            f"⚠️ En {juntos} {'obligación hay dos importes que se imputan' if juntos == 1 else 'obligaciones hay dos importes que se imputan'} "
+            "al mismo subconcepto. Van como dos VEPs separados, no sumados. "
+            "Si ARCA los quiere en uno solo, decímelo y lo cambio.")
+
     # El filtro define qué está en juego: lo que no se ve, no se paga. Así no
     # quedan importes tildados escondidos detrás de un filtro.
-    presentes = {NOMBRE_DE_COLUMNA[c['columna']] for c in candidatos}
-    opciones = [n for n in NOMBRE_DE_COLUMNA.values() if n in presentes]
+    presentes = {nombres[c['columna']] for c in candidatos}
+    opciones = [n for n in nombres.values() if n in presentes]
 
     c1, c2 = st.columns([3, 1])
     tipos = c1.multiselect(
@@ -1274,7 +1349,7 @@ def generar_veps(df, clave, cuit=""):
     todos = c2.checkbox("Tildar todo", key=f"vep_todos_{clave}",
                         help="Tilda de una lo que quedó visible.")
 
-    visibles = [c for c in candidatos if NOMBRE_DE_COLUMNA[c['columna']] in tipos]
+    visibles = [c for c in candidatos if nombres[c['columna']] in tipos]
     if not visibles:
         st.info("Elegí al menos un tipo de importe.")
         return
@@ -1285,7 +1360,7 @@ def generar_veps(df, clave, cuit=""):
 
     tabla = pd.DataFrame([{
         'Pagar': todos,
-        'Concepto': NOMBRE_DE_COLUMNA[c['columna']],
+        'Concepto': nombres[c['columna']],
         'Impuesto': c['Impuesto'],
         'Vencimiento': c['Vencimiento'],
         'Período': c['periodo'],
