@@ -361,8 +361,8 @@ archivo **lo pregunta**, porque mirando el Excel no se puede saber de qué juici
 
 Consecuencia: en una fila del juicio a los intereses cuya base está paga, dos importes distintos
 (`Interes_Resarcitorio` y `Interes_Capitalizable`) caen en el subconcepto 52. Salen como **dos VEPs
-separados, no sumados**, y la pantalla lo avisa. Si ARCA los quiere en uno solo, hay que decidirlo
-y cambiarlo: no se deduce.
+separados, no sumados**, y la pantalla lo dice. Los dos criterios —este y el de dejar los punitorios
+en 94— los confirmó Agustín el 27/08/2026.
 
 Los anticipos llevan el período con el **mes en 00** (`202600`) y el número de cuota en
 `anticipoCuota`. El resto lleva su mes.

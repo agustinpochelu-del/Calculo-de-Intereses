@@ -58,7 +58,8 @@ COLUMNAS_IMPORTE = {
 # trae con subconcepto INTERESES RESARCITORIOS. Entonces todo corre un escalón. La base
 # se paga como resarcitorio, y lo que el motor llama resarcitorios —interés devengado
 # sobre esa base— es interés sobre intereses, o sea capitalizable. Los punitorios son
-# punitorios en los dos casos: no dependen de qué sea la base.
+# punitorios en los dos casos: no dependen de qué sea la base. Criterio de Agustín,
+# confirmado el 27/08/2026.
 COLUMNAS_IMPORTE_BASE_INTERES = {
     'Capital': SUBCONCEPTO_RESARCITORIO,
     'Interes_Resarcitorio': SUBCONCEPTO_CAPITALIZABLE,

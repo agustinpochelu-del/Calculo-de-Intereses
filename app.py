@@ -1326,15 +1326,13 @@ def generar_veps(df, clave, cuit="", base_es_interes=False):
     # Dos importes de la misma obligación pueden caer en el mismo subconcepto: pasa
     # en el juicio a los intereses, donde los resarcitorios del cálculo y los
     # capitalizables posteriores al pago se imputan los dos como capitalizables.
-    # Salen como dos VEPs distintos, que es lo literal. No los sumo por mi cuenta:
-    # si van juntos, es una decisión de Agustín, no una deducción mía.
+    # Van como dos VEPs separados, no sumados: confirmado por Agustín el 27/08/2026.
     repetidos = Counter((c['fila'], c['subconcepto']) for c in candidatos)
     juntos = sum(1 for veces in repetidos.values() if veces > 1)
     if juntos:
         st.caption(
-            f"⚠️ En {juntos} {'obligación hay dos importes que se imputan' if juntos == 1 else 'obligaciones hay dos importes que se imputan'} "
-            "al mismo subconcepto. Van como dos VEPs separados, no sumados. "
-            "Si ARCA los quiere en uno solo, decímelo y lo cambio.")
+            f"En {juntos} {'obligación hay dos importes que se imputan' if juntos == 1 else 'obligaciones hay dos importes que se imputan'} "
+            "al mismo subconcepto: van como dos VEPs separados, no sumados.")
 
     # El filtro define qué está en juego: lo que no se ve, no se paga. Así no
     # quedan importes tildados escondidos detrás de un filtro.
