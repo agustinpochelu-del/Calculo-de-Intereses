@@ -110,6 +110,9 @@ pesos_md()                        # importe para un texto con formato. Dos "$" s
 
 mostrar_saldo()                   # UI: el cuadro del saldo, el control contra la nota del
                                   # agente fiscal y los VEPs de lo que falta.
+seccion_liquidar()                # UI: las dos planillas y la liquidación al pie. La usan
+                                  # el camino normal y el de "lo que todavía no se pagó".
+avisar_sin_filas()                # UI: por qué no quedó nada para calcular.
 
 mostrar_tabla_tasas()             # UI: cuadro de tasas de referencia al pie de cada resultado
 boton_descarga()                  # UI: arma el Excel liquidado (openpyxl) con fila de totales
@@ -304,7 +307,15 @@ fiscal reenvía la boleta reclamándolos al lado del renglón (*"debe punitorios
 Es frecuente, no una rareza.
 
 En la pantalla de importación se tilda **«Esta boleta ya se liquidó y se pagó antes»** y se
-carga la fecha a la que se liquidó. En vez de la liquidación entera sale el **saldo**.
+carga la fecha a la que se liquidó. La pantalla parte entonces las filas clasificadas en dos,
+según tengan o no pago registrado, y muestra las dos cosas:
+
+- las que se pagaron → el **saldo**;
+- las que no → **«Y lo que todavía no se pagó»**, con la liquidación entera de siempre.
+
+Una boleta puede traer las dos mezcladas, así que el modo saldo **agrega** una sección, no
+reemplaza la liquidación. Las dos usan `seccion_liquidar()`, con `clave` distinta porque
+Streamlit necesita que cada control tenga nombre propio.
 
 - El saldo es la **resta de dos liquidaciones completas**: la que se pagó y la que
   corresponde al día en que el dinero entró. **No se calcula como un tramo suelto entre
@@ -320,6 +331,11 @@ carga la fecha a la que se liquidó. En vez de la liquidación entera sale el **
   es una cifra fija una vez que se sabe qué día entró cada pago.
 - Los VEPs del saldo salen solo por los intereses (el capital va en cero, y además está
   pago), con las mismas reglas de subconcepto de siempre.
+- Una fila marcada con **«Int. pagos»** cuyo pago entró después de la fecha anterior es
+  casi siempre un error: si el capital se pagó tarde, los intereses no pueden estar del
+  todo cancelados. La pantalla lo avisa y dice qué destildar.
+- Cuando no queda ninguna fila, la pantalla **dice por qué** —cuántas están en «Int. pagos»
+  y cuántas en «revisar»— en vez de mostrar un vacío sin explicación.
 
 **El control contra la nota del agente fiscal.** `leer_mail.importe_reclamado()` saca el
 importe que la nota reclama y la pantalla lo contrasta contra el cálculo. Si no coinciden

@@ -1073,6 +1073,76 @@ def agentes_fiscales():
     return [d.strip().lower() for d in str(crudo).split(",") if d.strip()]
 
 
+def avisar_sin_filas(editado, canceladas):
+    """Cuando no queda nada que calcular, decir por qué. Vacío y sin explicación es peor."""
+    motivos = []
+    cuantas = int(canceladas.sum())
+    if cuantas:
+        motivos.append(f"{cuantas} {'está marcada' if cuantas == 1 else 'están marcadas'} "
+                       "con «Int. pagos»")
+    en_revisar = int(((editado['Destino'] == leer_mail.REVISAR) & ~canceladas).sum())
+    if en_revisar:
+        motivos.append(f"{en_revisar} {'quedó' if en_revisar == 1 else 'quedaron'} en «revisar»")
+    if motivos:
+        st.info("No queda ninguna fila para calcular: " + " y ".join(motivos) +
+                ". Corregí el **Destino** o destildá «Int. pagos» en la grilla de arriba.")
+    else:
+        st.info("No hay filas clasificadas todavía.")
+
+
+def seccion_liquidar(listo, base, cuit, clave="mail"):
+    """Las dos planillas que salen de lo revisado, con la liquidación al pie.
+
+    Devuelve False si no había nada que mostrar, para que el llamador explique por qué.
+
+    `clave` separa las instancias: con una liquidación anterior encima la pantalla
+    muestra el saldo de lo que se pagó tarde y, abajo, esta sección para lo que todavía
+    no se pagó. Streamlit necesita que cada control tenga nombre propio.
+    """
+    # La planilla se puede bajar —sirve para el expediente y para volver otro día—
+    # pero no hace falta bajarla y volver a subirla: los datos ya están revisados acá.
+    partes = []
+    for destino, columnas, etiqueta, archivo in (
+        (leer_mail.CAPITAL, COLUMNAS_CAPITAL, "Capital + Intereses", "Capital"),
+        (leer_mail.INTERESES, COLUMNAS_INTERESES, "Juicio a los Intereses", "Intereses"),
+    ):
+        parte = listo[listo['Destino'] == destino]
+        if not parte.empty:
+            partes.append((parte, columnas, etiqueta, archivo))
+
+    if not partes:
+        return False
+
+    columnas_ui = st.columns(len(partes))
+    for col, (parte, columnas, etiqueta, archivo) in zip(columnas_ui, partes):
+        resumen = (f"{len(parte)} {'fila' if len(parte) == 1 else 'filas'} · "
+                   f"{formato_arg(round(parte['Capital'].sum(), 2))}")
+        with col:
+            st.markdown(f"**{etiqueta}** — {resumen}")
+            st.checkbox("Liquidar acá mismo", key=f"liquidar_{clave}_{archivo}")
+            st.download_button(
+                "⬇️ Bajar la planilla",
+                data=armar_planilla(parte, columnas),
+                file_name=f"{base}_{archivo}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key=f"bajar_{clave}_{archivo}")
+
+    # Fuera de las columnas: la liquidación necesita el ancho completo, y además
+    # trae su propio desplegable de VEPs, que no puede ir adentro de otro.
+    for parte, columnas, etiqueta, archivo in partes:
+        if not st.session_state.get(f"liquidar_{clave}_{archivo}"):
+            continue
+        st.divider()
+        st.markdown(f"### {etiqueta}")
+        procesador = (procesar_juicio_capital if archivo == "Capital"
+                      else procesar_juicio_intereses)
+        try:
+            procesador(parte[columnas], clave=f"{clave}_{archivo}", cuit=cuit)
+        except Exception as e:
+            st.error(f"No pude liquidar {etiqueta}: {e}")
+    return True
+
+
 def mostrar_saldo(listo, fecha_anterior, cuit, base):
     """Lo que quedó faltando porque el dinero entró después de la liquidación anterior.
 
@@ -1347,58 +1417,50 @@ def procesar_mail(archivo_subido):
 
     base = (boleta['contribuyente'] or 'boleta').title().replace(' ', '_')[:40]
 
-    # Con una liquidación anterior encima, la liquidación entera no sirve de nada: lo
-    # que hay que pagar es la diferencia. Se muestra el saldo en su lugar.
     if fecha_anterior:
-        mostrar_saldo(listo, fecha_anterior, boleta['cuit'], base)
+        anterior = pd.Timestamp(fecha_anterior)
+
+        # Una obligación marcada como cancelada cuyo pago entró DESPUÉS de aquella
+        # liquidación no está del todo cancelada: por esos días corrieron punitorios.
+        # Es el error fácil de cometer en esta pantalla, así que se avisa.
+        conflicto = canceladas & (editado['F. Pago Capital'] > anterior)
+        if conflicto.any():
+            cuantas = int(conflicto.sum())
+            una = cuantas == 1
+            st.warning(
+                f"**{cuantas} {'obligación marcada' if una else 'obligaciones marcadas'} con "
+                f"«Int. pagos» {'tiene' if una else 'tienen'} el pago registrado después del "
+                f"{anterior:%d/%m/%Y}.** Por esos días corrieron punitorios que no estaban en "
+                f"aquella liquidación, así que {'esa fila deja' if una else 'esas filas dejan'} "
+                "saldo. Si todavía no pagaste ese resto, destildá «Int. pagos» para verlo."
+            )
+
+        clasificadas = listo[listo['Destino'] != leer_mail.REVISAR]
+        con_pago = clasificadas[clasificadas['F. Pago Capital'].notna()]
+        sin_pago = clasificadas[clasificadas['F. Pago Capital'].isna()]
+
+        if not con_pago.empty:
+            mostrar_saldo(con_pago, anterior, boleta['cuit'], base)
+
+        # Lo que no se pagó no deja saldo: se sigue debiendo entero y se liquida como
+        # siempre. Una boleta puede traer las dos cosas mezcladas.
+        if not sin_pago.empty:
+            st.divider()
+            st.markdown("#### Y lo que todavía no se pagó")
+            st.caption(
+                "Estas obligaciones no tienen pago registrado, así que no son un saldo: "
+                "se deben enteras y se liquidan como siempre."
+            )
+            seccion_liquidar(sin_pago, base, boleta['cuit'], clave="pendiente")
+
+        if con_pago.empty and sin_pago.empty:
+            avisar_sin_filas(editado, canceladas)
         return
 
     # --- Liquidar ---
     st.markdown("#### Liquidá")
-
-    # La planilla se puede bajar —sirve para el expediente y para volver otro día—
-    # pero no hace falta bajarla y volver a subirla: los datos ya están revisados acá.
-    partes = []
-    for destino, columnas, etiqueta, archivo in (
-        (leer_mail.CAPITAL, COLUMNAS_CAPITAL, "Capital + Intereses", "Capital"),
-        (leer_mail.INTERESES, COLUMNAS_INTERESES, "Juicio a los Intereses", "Intereses"),
-    ):
-        parte = listo[listo['Destino'] == destino]
-        if not parte.empty:
-            partes.append((parte, columnas, etiqueta, archivo))
-
-    if not partes:
-        st.info("No hay filas clasificadas todavía.")
-        return
-
-    columnas_ui = st.columns(len(partes))
-    for col, (parte, columnas, etiqueta, archivo) in zip(columnas_ui, partes):
-        resumen = (f"{len(parte)} {'fila' if len(parte) == 1 else 'filas'} · "
-                   f"{formato_arg(round(parte['Capital'].sum(), 2))}")
-        with col:
-            st.markdown(f"**{etiqueta}** — {resumen}")
-            st.checkbox("Liquidar acá mismo", key=f"liquidar_{archivo}")
-            st.download_button(
-                "⬇️ Bajar la planilla",
-                data=armar_planilla(parte, columnas),
-                file_name=f"{base}_{archivo}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                key=f"bajar_{archivo}")
-
-    # Fuera de las columnas: la liquidación necesita el ancho completo, y además
-    # trae su propio desplegable de VEPs, que no puede ir adentro de otro.
-    for parte, columnas, etiqueta, archivo in partes:
-        if not st.session_state.get(f"liquidar_{archivo}"):
-            continue
-        st.divider()
-        st.markdown(f"### {etiqueta}")
-        procesador = (procesar_juicio_capital if archivo == "Capital"
-                      else procesar_juicio_intereses)
-        try:
-            procesador(parte[columnas], clave=f"mail_{archivo}",
-                       cuit=boleta['cuit'])
-        except Exception as e:
-            st.error(f"No pude liquidar {etiqueta}: {e}")
+    if not seccion_liquidar(listo, base, boleta['cuit']):
+        avisar_sin_filas(editado, canceladas)
 
 
 # =====================================================================================
