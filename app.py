@@ -209,6 +209,16 @@ def formato_arg(numero):
     return f"${numero:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 
+def pesos_md(numero):
+    """Como `formato_arg`, pero para un texto con formato.
+
+    Streamlit lee un `$...$` como una fórmula matemática, así que un mensaje con dos
+    importes sale convertido en jeroglífico. Acá el peso va escapado. En `st.metric`
+    y en las tablas no hace falta: ahí el texto no se interpreta.
+    """
+    return formato_arg(numero).replace("$", "\\$")
+
+
 # =====================================================================================
 # TASAS: viven en tasas.json, al lado de este archivo
 #
@@ -458,6 +468,61 @@ def calcular_tramos(fila, df_tasas_res, df_tasas_pun, avisos=None):
         'Interes_Capitalizable': capitalizable, 'Dias_Capitalizables': dias_cap,
         'Interes_Punitorio': punitorio, 'Dias_Punitorios': dias_pun,
     })
+
+# --- El saldo que deja un pago tardío -------------------------------------------------
+# Se liquida a una fecha, se pagan los VEPs, y la plata se acredita unos días después.
+# Esos días de más devengan punitorios sobre un capital que, para ARCA, siguió impago.
+# El agente fiscal los reclama después ("debe punitorios 6.313,76").
+#
+# El saldo NO se calcula como un tramo suelto entre las dos fechas. Se calcula como la
+# RESTA DE DOS LIQUIDACIONES COMPLETAS de la misma obligación: la que se pagó y la que
+# corresponde al día en que el dinero efectivamente entró. La razón es que los días de
+# ARCA no son aditivos: con meses de 30 días, dias(V→P) puede no dar lo mismo que
+# dias(V→L) + dias(L→P). Probado sobre 8.874 combinaciones de fechas: no coinciden en
+# 993, siempre que el tramo cruza un fin de mes. El atajo daría un día de más en uno de
+# cada nueve casos.
+TIPOS_DE_INTERES = ['Interes_Resarcitorio', 'Interes_Capitalizable', 'Interes_Punitorio']
+
+
+def calcular_saldo(fila, fecha_anterior, df_tasas_res, df_tasas_pun, avisos=None):
+    """Lo que falta pagar de una fila, más lo que se pagó y lo que correspondía.
+
+    `fecha_anterior` es el día al que se liquidó y se pagó la vez pasada. Un pago que
+    ARCA ya tenía registrado a esa altura entró en aquella liquidación, así que la fila
+    salda en cero sola; el que entró después es el que deja resto.
+
+    Si la boleta no registra el pago, no hay con qué comparar y la fila se marca.
+    """
+    pago = fila.get('F. Pago Capital')
+    if pago is None or pd.isna(pago):
+        return pd.Series({
+            **{f'Pagado_{t}': 0.0 for t in TIPOS_DE_INTERES},
+            **{f'Correcto_{t}': 0.0 for t in TIPOS_DE_INTERES},
+            **{f'Saldo_{t}': 0.0 for t in TIPOS_DE_INTERES},
+            'Saldo_Motivo': ('La boleta no registra el pago de esta obligación, así que '
+                             'no puedo saber cuántos días corrieron de más. Cargá la fecha '
+                             'en "F. Pago Capital".'),
+        })
+
+    # Lo que se pagó: la liquidación de aquel día, con lo que se sabía aquel día.
+    pagado = calcular_tramos(
+        {**fila, 'Fecha_Liquidacion': fecha_anterior,
+         'F. Pago Capital': pago if pago <= fecha_anterior else pd.NaT},
+        df_tasas_res, df_tasas_pun, avisos)
+
+    # Lo correcto: hasta el día en que el dinero entró. Si entró antes de aquella
+    # liquidación, ya estaba contemplado y las dos cuentas dan igual: saldo cero.
+    correcto = calcular_tramos(
+        {**fila, 'Fecha_Liquidacion': max(pago, fecha_anterior)},
+        df_tasas_res, df_tasas_pun, avisos)
+
+    salida = {'Saldo_Motivo': ''}
+    for tipo in TIPOS_DE_INTERES:
+        salida[f'Pagado_{tipo}'] = pagado[tipo]
+        salida[f'Correcto_{tipo}'] = correcto[tipo]
+        salida[f'Saldo_{tipo}'] = round(correcto[tipo] - pagado[tipo], 2)
+    return pd.Series(salida)
+
 
 # =====================================================================================
 # VALIDACIONES DE LA HOJA "Deudas"
@@ -1008,6 +1073,125 @@ def agentes_fiscales():
     return [d.strip().lower() for d in str(crudo).split(",") if d.strip()]
 
 
+def mostrar_saldo(listo, fecha_anterior, cuit, base):
+    """Lo que quedó faltando porque el dinero entró después de la liquidación anterior.
+
+    El capital ya está cancelado, así que el saldo no sigue creciendo: es una cifra
+    fija una vez que se sabe qué día entró cada pago.
+    """
+    df_tasas_res, df_tasas_pun, meta = cargar_tasas()
+    avisos = set()
+    anterior = pd.Timestamp(fecha_anterior)
+
+    clasificadas = listo[listo['Destino'] != leer_mail.REVISAR].copy()
+    if clasificadas.empty:
+        st.info("No hay filas clasificadas todavía.")
+        return
+
+    st.markdown("#### Saldo por el pago tardío")
+    st.caption(
+        f"Comparo lo que correspondía al **{anterior:%d/%m/%Y}** contra lo que correspondía "
+        "al día en que ARCA registró cada pago. La diferencia es lo que falta. **No es un "
+        "tramo de intereses calculado aparte: es la resta de dos liquidaciones completas**, "
+        "porque los días de ARCA no se pueden sumar de a pedazos sin perder uno cada vez "
+        "que el tramo cruza un fin de mes."
+    )
+
+    saldo = clasificadas.join(clasificadas.apply(
+        calcular_saldo, axis=1, args=(anterior, df_tasas_res, df_tasas_pun, avisos)))
+    avisar_tramos_sin_dias(avisos)
+
+    columnas_saldo = [f'Saldo_{t}' for t in TIPOS_DE_INTERES]
+    saldo['Saldo_Total'] = saldo[columnas_saldo].sum(axis=1).round(2)
+    saldo['Pagado_Total'] = saldo[[f'Pagado_{t}' for t in TIPOS_DE_INTERES]].sum(axis=1)
+    saldo['Correcto_Total'] = saldo[[f'Correcto_{t}' for t in TIPOS_DE_INTERES]].sum(axis=1)
+    saldo['Reclamado'] = saldo['Nota'].apply(leer_mail.importe_reclamado)
+
+    c1, c2, c3, c4 = st.columns(4)
+    with c1: st.metric("Saldo a pagar", formato_arg(saldo['Saldo_Total'].sum()))
+    with c2: st.metric("Resarcitorios", formato_arg(saldo['Saldo_Interes_Resarcitorio'].sum()))
+    with c3: st.metric("Capitalizables", formato_arg(saldo['Saldo_Interes_Capitalizable'].sum()))
+    with c4: st.metric("Punitorios", formato_arg(saldo['Saldo_Interes_Punitorio'].sum()))
+
+    vista = pd.DataFrame({
+        'Impuesto': saldo['Impuesto'],
+        'concepto': saldo['concepto'],
+        'Periodo': saldo['Periodo'],
+        'Capital': saldo['Capital'].map(formato_arg),
+        'Pagó el': saldo['F. Pago Capital'].apply(
+            lambda d: d.strftime('%d/%m/%Y') if pd.notna(d) else '—'),
+        f'Pagaste al {anterior:%d/%m}': saldo['Pagado_Total'].map(formato_arg),
+        'Correspondía': saldo['Correcto_Total'].map(formato_arg),
+        'Saldo': saldo['Saldo_Total'].map(formato_arg),
+        'Reclama el agente': saldo['Reclamado'].apply(
+            lambda v: formato_arg(v) if pd.notna(v) else '—'),
+        'Diferencia': [('' if pd.isna(r) else formato_arg(round(t - r, 2)))
+                       for t, r in zip(saldo['Saldo_Total'], saldo['Reclamado'])],
+        'Problema': saldo['Saldo_Motivo'],
+    })
+    st.dataframe(vista, use_container_width=True, hide_index=True)
+
+    # El número del agente fiscal es un control, nunca el dato. Si no coincide con el
+    # cálculo se muestran los dos y se marca: uno de los dos está mal, y cuál es
+    # depende de mirarlo, no de elegir el más cómodo.
+    discrepan = saldo[saldo['Reclamado'].notna()
+                      & ((saldo['Saldo_Total'] - saldo['Reclamado']).abs() >= 0.01)]
+    for _, f in discrepan.iterrows():
+        st.warning(
+            f"**{f['Impuesto']} {f['Periodo']}**: el agente fiscal reclama "
+            f"{pesos_md(f['Reclamado'])} y a mí me da **{pesos_md(f['Saldo_Total'])}** "
+            f"— {pesos_md(round(abs(f['Saldo_Total'] - f['Reclamado']), 2))} de "
+            f"{'más' if f['Reclamado'] > f['Saldo_Total'] else 'menos'}. "
+            "Preguntá antes de pagar: uno de los dos números está mal."
+        )
+    coinciden = int((saldo['Reclamado'].notna()
+                     & ((saldo['Saldo_Total'] - saldo['Reclamado']).abs() < 0.01)).sum())
+    if coinciden:
+        st.success(f"{coinciden} {'fila coincide' if coinciden == 1 else 'filas coinciden'} "
+                   "al centavo con lo que reclama el agente fiscal.")
+
+    sin_pago = saldo[saldo['Saldo_Motivo'] != '']
+    if not sin_pago.empty:
+        st.warning(
+            f"**{len(sin_pago)} {'fila' if len(sin_pago) == 1 else 'filas'} sin fecha de pago "
+            "registrada**: no puedo calcular el saldo y no entran en los VEPs. Cargá la "
+            "fecha en la grilla de arriba."
+        )
+
+    detalle = ['Impuesto', 'concepto', 'Periodo', 'Vencimiento', 'Capital', 'F. Pago Capital',
+               'Pagado_Total', 'Correcto_Total'] + columnas_saldo + ['Saldo_Total']
+    descarga = saldo[detalle].copy()
+    for col in ('Vencimiento', 'F. Pago Capital'):
+        descarga[col] = descarga[col].apply(
+            lambda d: d.strftime('%d/%m/%Y') if pd.notna(d) else '')
+    boton_descarga(
+        descarga, f"{base}_Saldo.xlsx", clave="saldo",
+        columnas_moneda=['Capital', 'Pagado_Total', 'Correcto_Total'] + columnas_saldo + ['Saldo_Total'],
+        columnas_totalizar=['Capital'] + columnas_saldo + ['Saldo_Total'])
+
+    # --- Los VEPs del saldo ---
+    # Lo que se debe son intereses: el capital está cancelado, y por eso va en cero.
+    pagables = saldo[(saldo['Saldo_Motivo'] == '') & (saldo['Saldo_Total'] >= 0.01)]
+    if pagables.empty:
+        st.info("No quedó saldo para pagar.")
+        return
+
+    for destino, etiqueta in ((leer_mail.CAPITAL, "Capital + Intereses"),
+                              (leer_mail.INTERESES, "Juicio a los Intereses")):
+        parte = pagables[pagables['Destino'] == destino]
+        if parte.empty:
+            continue
+        para_veps = parte[['Impuesto', 'concepto', 'Periodo', 'Vencimiento',
+                           'F. Pago Capital']].copy()
+        para_veps['Capital'] = 0.0
+        for tipo in TIPOS_DE_INTERES:
+            para_veps[tipo] = parte[f'Saldo_{tipo}']
+        with st.expander(f"🧾 Generar los VEPs del saldo — {etiqueta} "
+                         f"({formato_arg(parte['Saldo_Total'].sum())})"):
+            generar_veps(para_veps, f"saldo_{destino}", cuit,
+                         base_es_interes=(destino == leer_mail.INTERESES))
+
+
 def procesar_mail(archivo_subido):
     habilitados = agentes_fiscales()
     boleta = leer_mail.leer_boleta(archivo_subido.getvalue(), habilitados)
@@ -1046,8 +1230,8 @@ def procesar_mail(archivo_subido):
     else:
         st.error(
             f"**Las filas no suman el monto de demanda.** Leí {len(df)} filas por "
-            f"{formato_arg(suma)} y la boleta declara {formato_arg(declarado)} "
-            f"(diferencia: {formato_arg(round(declarado - suma, 2))}). "
+            f"{pesos_md(suma)} y la boleta declara {pesos_md(declarado)} "
+            f"(diferencia: {pesos_md(round(declarado - suma, 2))}). "
             "Algo se leyó mal o quedó afuera: revisá el mail antes de usar esto."
         )
 
@@ -1061,6 +1245,28 @@ def procesar_mail(archivo_subido):
     fecha_liquidacion = c2.date_input(
         "Fecha de liquidación", value=datetime.date.today(), format="DD/MM/YYYY",
         key="mail_liquidacion", help="Hasta qué día se calculan los intereses. La elegís vos.")
+
+    # El caso frecuente: se liquidó, se pagaron los VEPs, y la plata se acreditó unos
+    # días después. Esos días devengaron punitorios sobre un capital que para ARCA
+    # seguía impago, y el agente fiscal los reclama en el reenvío de la boleta.
+    rehacer = st.checkbox(
+        "Esta boleta ya se liquidó y se pagó antes",
+        key="mail_hay_anterior",
+        help="Tildalo cuando el agente fiscal reenvía la boleta reclamando lo que faltó "
+             "porque el pago entró después de la fecha a la que liquidaste. En vez de la "
+             "liquidación entera, te muestro el saldo.")
+    fecha_anterior = None
+    if rehacer:
+        fecha_anterior = st.date_input(
+            "Liquidado y pagado al", value=fecha_liquidacion, format="DD/MM/YYYY",
+            key="mail_fecha_anterior",
+            help="El día hasta el que calculaste la vez pasada, y al que pagaste los VEPs. "
+                 "Las obligaciones cuyo pago ARCA registró hasta esa fecha saldan en cero: "
+                 "ya estaban contempladas.")
+        st.caption(
+            "Supone que aquella liquidación **se pagó completa ese día**. Si pagaste en "
+            "tandas, avisame: hay que cargar la fecha renglón por renglón."
+        )
 
     # --- Revisión fila por fila ---
     st.markdown("#### Revisá lo que leí")
@@ -1135,13 +1341,20 @@ def procesar_mail(archivo_subido):
                 "—queda afuera igual— pero conviene escribirla: es lo que después dice cuándo se canceló."
             )
 
-    # --- Liquidar ---
-    st.markdown("#### Liquidá")
     listo = editado[~canceladas].copy()
     listo['fecha_Demanda'] = pd.Timestamp(fecha_demanda)
     listo['Fecha_Liquidacion'] = pd.Timestamp(fecha_liquidacion)
 
     base = (boleta['contribuyente'] or 'boleta').title().replace(' ', '_')[:40]
+
+    # Con una liquidación anterior encima, la liquidación entera no sirve de nada: lo
+    # que hay que pagar es la diferencia. Se muestra el saldo en su lugar.
+    if fecha_anterior:
+        mostrar_saldo(listo, fecha_anterior, boleta['cuit'], base)
+        return
+
+    # --- Liquidar ---
+    st.markdown("#### Liquidá")
 
     # La planilla se puede bajar —sirve para el expediente y para volver otro día—
     # pero no hace falta bajarla y volver a subirla: los datos ya están revisados acá.

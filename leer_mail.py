@@ -157,6 +157,28 @@ def _fecha(texto, cual=0):
     return f"{anio}-{int(mes):02d}-{int(dia):02d}"
 
 
+# El agente fiscal escribe al lado del renglón cuánto quedó faltando cuando el pago
+# entró después de la liquidación ("debe punitorios 6.313,76"). Puede venir con uno o
+# dos decimales, según cómo lo tipee.
+_RE_RECLAMO = re.compile(r'(\d{1,3}(?:\.\d{3})*|\d+),(\d{1,2})')
+
+
+def importe_reclamado(nota):
+    """El importe que el agente fiscal dice que falta, si lo escribió en la nota.
+
+    Es un CONTROL, no un dato de cálculo: sirve para contrastarlo contra lo que da
+    el motor. Nunca reemplaza al cálculo —una vez uno de estos números vino tipeado
+    con un dígito cambiado— y por eso, cuando los dos no coinciden, se muestran los
+    dos y se marca la diferencia en vez de elegir uno.
+    """
+    if 'debe' not in _comprimir(nota):
+        return None
+    m = _RE_RECLAMO.search(nota or '')
+    if not m:
+        return None
+    return float(m.group(1).replace('.', '') + '.' + m.group(2).ljust(2, '0'))
+
+
 def _importe(texto):
     """Convierte '2.452.500,32' o '366033,27' en float. None si no hay número."""
     m = _RE_IMPORTE.match(texto or '')

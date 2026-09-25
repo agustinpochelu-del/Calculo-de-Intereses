@@ -103,6 +103,13 @@ avisar_tramos_sin_dias()          # avisa si hubo que usar un tramo completo sin
 calcular_tramos()                 # los tres tramos de una fila (Caso A / B / sin pago, ver
                                   # punto 5). Lo usan LAS DOS lengüetas de liquidación:
                                   # un solo motor, un solo lugar donde validarlo.
+calcular_saldo()                  # lo que falta cuando el pago entró después de la
+                                  # liquidación: resta dos corridas de calcular_tramos.
+pesos_md()                        # importe para un texto con formato. Dos "$" sueltos en
+                                  # el mismo mensaje los lee Streamlit como una fórmula.
+
+mostrar_saldo()                   # UI: el cuadro del saldo, el control contra la nota del
+                                  # agente fiscal y los VEPs de lo que falta.
 
 mostrar_tabla_tasas()             # UI: cuadro de tasas de referencia al pie de cada resultado
 boton_descarga()                  # UI: arma el Excel liquidado (openpyxl) con fila de totales
@@ -288,6 +295,37 @@ de «Revisá lo que leí» es editable justamente para eso:
 - Con *Add row* se pueden agregar renglones que no vengan en el mail.
 
 Una fila cancelada tampoco cuenta como «sin clasificar»: el aviso de filas en `revisar` la saltea.
+
+### El saldo que deja un pago tardío
+
+Se liquida a una fecha, se pagan los VEPs, y ARCA acredita el pago unos días después.
+Esos días devengan punitorios sobre un capital que, para ARCA, siguió impago; el agente
+fiscal reenvía la boleta reclamándolos al lado del renglón (*"debe punitorios 6.313,76"*).
+Es frecuente, no una rareza.
+
+En la pantalla de importación se tilda **«Esta boleta ya se liquidó y se pagó antes»** y se
+carga la fecha a la que se liquidó. En vez de la liquidación entera sale el **saldo**.
+
+- El saldo es la **resta de dos liquidaciones completas**: la que se pagó y la que
+  corresponde al día en que el dinero entró. **No se calcula como un tramo suelto entre
+  las dos fechas**, y esto no es una preferencia de estilo: los días de ARCA no son
+  aditivos. Sobre 8.874 combinaciones de fechas, `dias(A→C)` difiere de
+  `dias(A→B) + dias(B→C)` en 993 —el 11%—, siempre que el tramo cruza un fin de mes.
+  El atajo daría un día de más en uno de cada nueve casos. Está en `calcular_saldo`.
+- Una obligación cuyo pago ARCA ya tenía registrado a la fecha de la liquidación anterior
+  **salda en cero sola**, sin regla especial: las dos cuentas dan lo mismo.
+- Si la boleta no registra el pago, la fila **se marca y no entra en los VEPs**. No se
+  inventa una fecha.
+- **El saldo no sigue creciendo.** Cancelado el capital, los punitorios dejan de correr:
+  es una cifra fija una vez que se sabe qué día entró cada pago.
+- Los VEPs del saldo salen solo por los intereses (el capital va en cero, y además está
+  pago), con las mismas reglas de subconcepto de siempre.
+
+**El control contra la nota del agente fiscal.** `leer_mail.importe_reclamado()` saca el
+importe que la nota reclama y la pantalla lo contrasta contra el cálculo. Si no coinciden
+se muestran **los dos** y se marca la diferencia: no se elige uno. Sirvió apenas se
+estrenó —una nota traía 6.313,76 donde correspondía 4.313,76, un dígito mal tipeado— y
+esa es exactamente la razón de que el número del agente fiscal no se use nunca como dato.
 
 ### Limitaciones conocidas
 

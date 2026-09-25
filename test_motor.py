@@ -157,6 +157,54 @@ check("sin pago: punitorios igual que la fórmula de dos tramos", t['Interes_Pun
 check("sin pago: sin capitalizables", t['Interes_Capitalizable'], 0.0)
 
 # =====================================================================================
+# Pago tardio: se liquido al 21/09 y se pagaron los VEPs, pero ARCA registro el pago el
+# 23/09. Esos dos dias devengaron punitorios sobre un capital que para ARCA seguia
+# impago. El agente fiscal reclamo despues el importe que falto, y una de las dos filas
+# lo trae al centavo (la otra vino con un digito mal tipeado, confirmado a mano).
+print("\n5 ter) Saldo por pago tardio")
+DEMANDA, ANTERIOR = F('2026-08-26'), F('2026-09-21')
+CASOS = [  # capital, pago real, saldo que corresponde
+    (6059054.30, '2026-09-23', 14137.80),   # coincide con lo que reclamo el agente fiscal
+    (1848755.20, '2026-09-23', 4313.76),
+]
+for capital, pago, esperado in CASOS:
+    fila = pd.Series({
+        'Vencimiento': F('2026-02-23'), 'F. Pago Capital': F(pago),
+        'fecha_Demanda': DEMANDA, 'Fecha_Liquidacion': ANTERIOR, 'Capital': capital,
+    })
+    s = app.calcular_saldo(fila, ANTERIOR, RES, PUN)
+    total = sum(s[f'Saldo_{t}'] for t in app.TIPOS_DE_INTERES)
+    check(f"saldo de {capital}", round(total, 2), esperado, tol=0.01)
+    check(f"el saldo de {capital} es todo punitorios", round(s['Saldo_Interes_Punitorio'], 2), esperado, tol=0.01)
+
+# Un pago que ARCA ya tenia registrado a la fecha de la liquidacion anterior ya estaba
+# contemplado en ella: la fila tiene que saldar en cero, sin regla especial.
+for pago in ('2026-09-21', '2026-09-15'):
+    fila = pd.Series({
+        'Vencimiento': F('2026-02-23'), 'F. Pago Capital': F(pago),
+        'fecha_Demanda': DEMANDA, 'Fecha_Liquidacion': ANTERIOR, 'Capital': 6059054.30,
+    })
+    s = app.calcular_saldo(fila, ANTERIOR, RES, PUN)
+    check(f"pago el {pago}, hasta la liquidacion anterior: sin saldo",
+          round(sum(s[f'Saldo_{t}'] for t in app.TIPOS_DE_INTERES), 2), 0.0)
+
+# Sin fecha de pago no hay con que comparar: se marca y no se inventa un numero.
+fila = pd.Series({
+    'Vencimiento': F('2026-02-23'), 'F. Pago Capital': pd.NaT,
+    'fecha_Demanda': DEMANDA, 'Fecha_Liquidacion': ANTERIOR, 'Capital': 6059054.30,
+})
+s = app.calcular_saldo(fila, ANTERIOR, RES, PUN)
+check("sin fecha de pago se marca", int(bool(s['Saldo_Motivo'])), 1)
+check("sin fecha de pago no inventa importe",
+      round(sum(s[f'Saldo_{t}'] for t in app.TIPOS_DE_INTERES), 2), 0.0)
+
+# La razon por la que el saldo se calcula restando dos liquidaciones y no como un tramo
+# suelto: los dias de ARCA no son aditivos cuando el tramo cruza un fin de mes.
+check("los dias de ARCA no se pueden partir",
+      app.dias_arca(F('2026-01-01'), F('2026-02-01')),
+      app.dias_arca(F('2026-01-01'), F('2026-01-24')) + app.dias_arca(F('2026-01-24'), F('2026-02-01')) - 1)
+
+# =====================================================================================
 print("\n6) La tabla oficial de tasas.json está completa y sin huecos")
 # cargar_tasas() revienta si los tramos no empalman, así que llegar hasta acá ya es
 # parte de la prueba.

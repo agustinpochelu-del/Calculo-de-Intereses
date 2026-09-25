@@ -239,6 +239,19 @@ for descripcion, datos in (
         print(f"  ok    {descripcion}: protesta bien ({str(e)[:55]}...)")
 
 # =====================================================================================
+print("\n8) El importe que reclama el agente fiscal")
+# Lo escribe al lado del renglon cuando el pago entro despues de la liquidacion.
+check("lee el importe reclamado", leer_mail.importe_reclamado("debe punitorios 6.313,76"), 6313.76)
+check("tolera un solo decimal", leer_mail.importe_reclamado("debe punitorios 14.137,8"), 14137.8)
+check("una nota sin 'debe' no reclama nada",
+      leer_mail.importe_reclamado("PLAN RG 5321 capital + resarcitorios + punitorios"), None)
+check("'DEBE' sin importe no reclama nada", leer_mail.importe_reclamado("DEBE"), None)
+check("'debe intereses' sin importe tampoco",
+      leer_mail.importe_reclamado("pto. DJ debe intereses"), None)
+check("no confunde un numero de plan con un importe",
+      leer_mail.importe_reclamado("PLAN VIGENTE RG5321-W064792"), None)
+
+# =====================================================================================
 print("\n" + "=" * 60)
 if fallos:
     print(f"{len(fallos)} FALLA(S):")
